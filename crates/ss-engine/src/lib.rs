@@ -24,13 +24,17 @@ struct Inner {
     store: Arc<dyn Store>,
     config: EngineConfig,
     frames: FrameHub,
+    events: broadcast::Sender<Event>,
 }
+
+/// Capacity of the event broadcast channel.
+pub const EVENT_CHANNEL_CAPACITY: usize = 256;
 
 impl Engine {
     /// Construct without starting anything. Must not panic or touch the network.
     pub fn new(store: Arc<dyn Store>, config: EngineConfig) -> Self {
-        let _ = (store, config);
-        todo!()
+        let (events, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+        Self { inner: Arc::new(Inner { store, config, frames: FrameHub::new(), events }) }
     }
 
     /// Close dangling recordings, start workers for enabled cameras and the
@@ -80,12 +84,13 @@ impl Engine {
 
     /// Persist an event and broadcast it to subscribers.
     pub fn emit_event(&self, ev: NewEvent) -> Result<Event> {
-        let _ = ev;
-        todo!()
+        let event = self.inner.store.create_event(&ev)?;
+        let _ = self.inner.events.send(event.clone());
+        Ok(event)
     }
 
     pub fn subscribe_events(&self) -> broadcast::Receiver<Event> {
-        todo!()
+        self.inner.events.subscribe()
     }
 
     /// Run one retention sweep across all cameras; returns recordings deleted.
