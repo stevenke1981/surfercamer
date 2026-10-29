@@ -1,0 +1,19 @@
+[package]
+name = "ss-engine"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+async-trait = "0.1.92"
+bytes = "1.12.1"
+chrono = "0.4.45"
+ss-camera = { version = "0.1.0", path = "../ss-camera" }
+ss-core = { version = "0.1.0", path = "../ss-core" }
+ss-db = { version = "0.1.0", path = "../ss-db" }
+ss-motion = { version = "0.1.0", path = "../ss-motion" }
+ss-recorder = { version = "0.1.0", path = "../ss-recorder" }
+tokio = { version = "1.54.1", features = ["full"] }
+tracing = "0.1.44"
+
+[dev-dependencies]
+tempfile = "3.27.0"
