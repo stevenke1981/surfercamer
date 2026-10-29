@@ -9,6 +9,7 @@ mod tests;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -108,7 +109,7 @@ impl Engine {
         self.recover_dangling()?;
         for camera in self.inner.store.list_cameras()? {
             if camera.enabled && !self.has_worker(camera.id) {
-                self.launch(camera);
+                self.launch(camera, false);
             }
         }
         self.start_retention();
@@ -123,22 +124,32 @@ impl Engine {
         if let Some(task) = retention {
             task.stop().await;
         }
-        let workers: Vec<Worker> = lock(&self.inner.workers).drain().map(|(_, w)| w).collect();
-        for worker in workers {
+        let workers: Vec<(CameraId, Worker)> = lock(&self.inner.workers).drain().collect();
+        for (id, worker) in workers {
             worker.task.stop().await;
+            self.inner.frames.clear_latest(id);
         }
         info!("engine stopped");
+    }
+
+    /// Stop the camera's worker if one is running, finishing open segments.
+    /// Does not consult the store; clears the camera's latest snapshot.
+    pub async fn stop_camera(&self, id: CameraId) {
+        let _guard = self.inner.lifecycle.lock().await;
+        self.stop_worker(id).await;
     }
 
     /// (Re)load a camera from the store and restart its worker; stops the
     /// worker if the camera is disabled or no longer exists.
     pub async fn reload_camera(&self, id: CameraId) -> Result<()> {
         let _guard = self.inner.lifecycle.lock().await;
+        // A manual recording in progress survives the reload.
+        let manual = self.worker_manual(id);
         self.stop_worker(id).await;
         match self.inner.store.get_camera(id) {
             Ok(camera) => {
                 if camera.enabled {
-                    self.launch(camera);
+                    self.launch(camera, manual);
                 }
                 Ok(())
             }
@@ -214,7 +225,8 @@ impl Engine {
 
         for camera in store.list_cameras()? {
             let candidates = store.retention_candidates(camera.id)?;
-            let usage = store.recording_usage(Some(camera.id))?;
+            // The open segment is not a candidate yet, but it occupies space.
+            let usage = store.recording_usage(Some(camera.id))? + self.open_bytes(camera.id);
             let ids = retention::plan(&candidates, &camera.recording.retention, usage, now);
             for id in ids {
                 let Some(rec) = candidates.iter().find(|r| r.id == id) else {
@@ -247,10 +259,20 @@ impl Engine {
         lock(&self.inner.workers).contains_key(&id)
     }
 
+    /// Manual-recording flag of the running worker for `id`, if any.
+    fn worker_manual(&self, id: CameraId) -> bool {
+        lock(&self.inner.workers).get(&id).is_some_and(|w| lock(&w.shared.policy).manual())
+    }
+
+    /// Bytes in the camera's open segment (0 when not recording).
+    fn open_bytes(&self, id: CameraId) -> u64 {
+        lock(&self.inner.workers).get(&id).map_or(0, |w| w.shared.open_bytes.load(Ordering::Relaxed))
+    }
+
     /// Spawn a worker for `camera` and register it. Caller holds `lifecycle`.
-    fn launch(&self, camera: Camera) {
+    fn launch(&self, camera: Camera, manual: bool) {
         let id = camera.id;
-        let worker = worker::spawn(self.clone(), camera);
+        let worker = worker::spawn(self.clone(), camera, manual);
         info!(camera = id, "camera worker started");
         let previous = lock(&self.inner.workers).insert(id, worker);
         if let Some(previous) = previous {
@@ -266,6 +288,8 @@ impl Engine {
             worker.task.stop().await;
             info!(camera = id, "camera worker stopped");
         }
+        // A stopped camera must not keep serving its last snapshot.
+        self.inner.frames.clear_latest(id);
     }
 
     fn start_retention(&self) {
@@ -327,7 +351,13 @@ impl Engine {
                     }
                 }
                 Err(Error::NotFound(_)) => discard("segment file missing"),
-                Err(e) => warn!(recording = rec.id, error = %e, "could not read unfinished segment; left as is"),
+                Err(e) => {
+                    // Keep the file, but close the row so it does not stay unfinished forever.
+                    warn!(recording = rec.id, error = %e, "could not read unfinished segment; closing it empty");
+                    if let Err(e) = store.finish_recording(rec.id, rec.start, 0, 0) {
+                        warn!(recording = rec.id, error = %e, "could not close unreadable recording row");
+                    }
+                }
             }
         }
         Ok(())

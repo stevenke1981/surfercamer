@@ -12,9 +12,13 @@ use ss_core::{CameraId, Error, Frame, Result};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::{Child, ChildStdout, Command};
 use tokio::task::JoinHandle;
+use tokio::time::Instant;
 
 use crate::mjpeg::JpegSplitter;
 use crate::{camera_error, make_frame, FrameSource};
+
+/// A stream with no complete frame for this long is treated as broken.
+const NO_FRAME_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Program used for decoding: `$SS_FFMPEG` if set and non-empty, else `ffmpeg`.
 fn ffmpeg_bin() -> String {
@@ -75,6 +79,10 @@ fn with_credentials(url: &str, username: Option<&str>, password: Option<&str>) -
 
 /// ffmpeg arguments used for a stream (exposed for testing). Credentials are
 /// injected into the URL userinfo, percent-encoded.
+///
+/// These arguments contain the camera password. They must never be logged or
+/// included in error messages; the `Debug`/`Display` output of a `Command` built
+/// from them must not be formatted either.
 pub fn ffmpeg_args(
     url: &str,
     username: Option<&str>,
@@ -102,6 +110,15 @@ pub fn ffmpeg_args(
     ]
 }
 
+/// RTSP frame source backed by an `ffmpeg` child process.
+///
+/// Known limitation: when a username or password is configured it is injected
+/// into the URL userinfo and therefore appears in the child's command line,
+/// which is visible to other local users through `ps`. ffmpeg offers no way to
+/// pass RTSP credentials on stdin or through the environment, so this is
+/// accepted; keep the host private or use a dedicated, low-privilege camera
+/// account. Error texts from ffmpeg and its stderr are scrubbed before they
+/// reach callers.
 pub struct RtspSource {
     camera_id: CameraId,
     /// Kept so that the process is killed when the source is dropped.
@@ -113,6 +130,9 @@ pub struct RtspSource {
     stderr_task: Option<JoinHandle<()>>,
     /// Last non-empty stderr line written by ffmpeg.
     last_stderr: Arc<Mutex<Option<String>>>,
+    /// Time of the last complete frame, or of spawn if none has arrived yet.
+    last_frame: Instant,
+    no_frame_timeout: Duration,
 }
 
 impl RtspSource {
@@ -123,8 +143,23 @@ impl RtspSource {
         password: Option<&str>,
         fps: u32,
     ) -> Result<Self> {
+        Self::spawn_with(camera_id, &ffmpeg_bin(), url, username, password, fps, NO_FRAME_TIMEOUT).await
+    }
+
+    /// `spawn` with an explicit ffmpeg program and no-frame timeout (tests use
+    /// a fake program so that no real camera or ffmpeg is needed).
+    async fn spawn_with(
+        camera_id: CameraId,
+        program: &str,
+        url: &str,
+        username: Option<&str>,
+        password: Option<&str>,
+        fps: u32,
+        no_frame_timeout: Duration,
+    ) -> Result<Self> {
         let args = ffmpeg_args(url, username, password, fps);
-        let mut child = Command::new(ffmpeg_bin())
+        // Errors below must not include `args` (they contain the password).
+        let mut child = Command::new(program)
             .args(&args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -164,6 +199,8 @@ impl RtspSource {
             read_buf: vec![0u8; 64 * 1024],
             stderr_task: Some(stderr_task),
             last_stderr,
+            last_frame: Instant::now(),
+            no_frame_timeout,
         })
     }
 
@@ -191,15 +228,24 @@ impl FrameSource for RtspSource {
     async fn next_frame(&mut self) -> Result<Frame> {
         loop {
             if let Some(jpeg) = self.pending.pop_front() {
+                self.last_frame = Instant::now();
                 return Ok(make_frame(self.camera_id, jpeg));
             }
-            match self.stdout.read(&mut self.read_buf).await {
-                Ok(0) => return Err(self.end_of_stream().await),
-                Ok(n) => {
+            let deadline = self.last_frame + self.no_frame_timeout;
+            let read = tokio::time::timeout_at(deadline, self.stdout.read(&mut self.read_buf)).await;
+            match read {
+                Err(_) => {
+                    return Err(camera_error(format!(
+                        "no frame for {} s",
+                        self.no_frame_timeout.as_secs_f64()
+                    )))
+                }
+                Ok(Ok(0)) => return Err(self.end_of_stream().await),
+                Ok(Ok(n)) => {
                     let frames = self.splitter.push(&self.read_buf[..n]);
                     self.pending.extend(frames);
                 }
-                Err(e) => return Err(camera_error(format!("ffmpeg read failed: {e}"))),
+                Ok(Err(e)) => return Err(camera_error(format!("ffmpeg read failed: {e}"))),
             }
         }
     }
@@ -255,6 +301,41 @@ mod tests {
             with_credentials("rtsps://u:p@h/s", Some(""), None),
             "rtsps://u:p@h/s"
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn silent_ffmpeg_trips_no_frame_timeout() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("fake-ffmpeg");
+        std::fs::write(&script, "#!/bin/sh\nexec sleep 60\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let started = std::time::Instant::now();
+        let mut source = RtspSource::spawn_with(
+            1,
+            script.to_str().unwrap(),
+            "rtsp://cam.local/s",
+            Some("user"),
+            Some("secret"),
+            10,
+            Duration::from_millis(300),
+        )
+        .await
+        .expect("spawn fake ffmpeg");
+        let err = source.next_frame().await.expect_err("silent stream must fail");
+        assert!(matches!(&err, Error::Camera(m) if m.contains("no frame")), "{err:?}");
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn camera_errors_are_scrubbed() {
+        let err = camera_error("ffmpeg: rtsp://admin:hunter2@10.0.0.5/live: 401");
+        let text = err.to_string();
+        assert!(!text.contains("hunter2"), "{text}");
+        assert!(text.contains("10.0.0.5/live"), "{text}");
     }
 
     #[test]

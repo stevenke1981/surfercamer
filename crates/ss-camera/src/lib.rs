@@ -84,7 +84,9 @@ pub(crate) fn make_frame(camera_id: CameraId, jpeg: Bytes) -> Frame {
     }
 }
 
-/// Shorthand for a camera-side failure.
+/// Shorthand for a camera-side failure. The message is scrubbed of URL
+/// userinfo because reqwest and ffmpeg errors may echo the camera URL with
+/// its credentials.
 pub(crate) fn camera_error(msg: impl Into<String>) -> Error {
-    Error::Camera(msg.into())
+    Error::Camera(ss_core::redact::scrub_credentials(&msg.into()))
 }

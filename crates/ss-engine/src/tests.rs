@@ -196,6 +196,16 @@ async fn motion_schedule_produces_motion_events_and_motion_recording() {
     let recs = recordings_of(&store, cam.id);
     assert!(recs.iter().filter(|r| r.trigger == RecordingTrigger::Motion).all(|r| r.end.is_some()));
     assert!(recs.iter().all(|r| r.trigger == RecordingTrigger::Motion), "unexpected trigger in {recs:?}");
+
+    // The first motion event starts the motion recording; it must be linked to it.
+    let stored = store
+        .list_events(&EventQuery { camera_id: Some(cam.id), kind: Some(EventKind::Motion), ..Default::default() })
+        .expect("list events");
+    let first = stored.iter().min_by_key(|e| e.at).expect("stored motion event");
+    let linked = first.recording_id.expect("first motion event must reference its recording");
+    let rec = store.get_recording(linked).expect("linked recording exists");
+    assert_eq!(rec.trigger, RecordingTrigger::Motion);
+    assert_eq!(rec.camera_id, cam.id);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -331,4 +341,85 @@ async fn retention_deletes_old_unlocked_and_keeps_locked() {
 
     // Second sweep finds nothing to do.
     assert_eq!(engine.run_retention().await.unwrap(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manual_recording_survives_reload() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = new_store();
+    let motion = MotionConfig { enabled: false, ..MotionConfig::default() };
+    let cam = store
+        .create_camera(&synthetic("manual-reload", Schedule::uniform(ScheduleMode::None), true, motion))
+        .unwrap();
+    let engine = engine_in(&store, dir.path());
+    engine.start().await.unwrap();
+    assert!(wait_for(10, || engine.status(cam.id).state == ConnectionState::Online).await);
+
+    engine.set_manual_recording(cam.id, true).await.unwrap();
+    assert!(wait_for(5, || engine.status(cam.id).recording).await, "manual recording did not start");
+
+    // Settings change while recording: the manual request must still be honoured.
+    engine.reload_camera(cam.id).await.unwrap();
+    assert!(
+        wait_for(10, || {
+            let st = engine.status(cam.id);
+            st.recording && st.recording_trigger == Some(RecordingTrigger::Manual)
+        })
+        .await,
+        "manual recording lost on reload"
+    );
+    engine.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stop_camera_stops_worker_and_clears_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = new_store();
+    let motion = MotionConfig { enabled: false, ..MotionConfig::default() };
+    let cam = store
+        .create_camera(&synthetic("stopping", Schedule::uniform(ScheduleMode::Continuous), true, motion))
+        .unwrap();
+    let engine = engine_in(&store, dir.path());
+    engine.start().await.unwrap();
+    assert!(wait_for(10, || engine.frames().latest(cam.id).is_some()).await, "no frame published");
+    assert!(wait_for(5, || !recordings_of(&store, cam.id).is_empty()).await, "no recording row");
+
+    engine.stop_camera(cam.id).await;
+
+    assert!(!engine.has_worker(cam.id), "worker still registered after stop_camera");
+    assert_eq!(engine.status(cam.id).state, ConnectionState::Disabled);
+    assert!(engine.frames().latest(cam.id).is_none(), "stale snapshot served after stop");
+    let recs = recordings_of(&store, cam.id);
+    assert!(!recs.is_empty() && recs.iter().all(|r| r.end.is_some()), "open segment not finished: {recs:?}");
+    // Stopping a camera without a worker is a no-op.
+    engine.stop_camera(cam.id).await;
+    engine.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unreadable_dangling_segment_is_closed_with_zero_totals() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = new_store();
+    let cam = store
+        .create_camera(&synthetic("unreadable", Schedule::default(), false, MotionConfig::default()))
+        .unwrap();
+    let start = Utc.with_ymd_and_hms(2026, 5, 2, 9, 0, 0).unwrap();
+    let rel = segment_rel_path(cam.id, start);
+    let data_path = dir.path().join(&rel);
+    std::fs::create_dir_all(data_path.parent().unwrap()).unwrap();
+    std::fs::write(&data_path, b"partial").unwrap();
+    // A directory where the index file should be: reading it fails with a non-NotFound error.
+    std::fs::create_dir(ss_recorder::segment::index_path_for(&data_path)).unwrap();
+    let rec = store
+        .create_recording(&NewRecording { camera_id: cam.id, path: rel.clone(), start, trigger: RecordingTrigger::Continuous })
+        .unwrap();
+
+    let engine = engine_in(&store, dir.path());
+    engine.start().await.unwrap();
+    engine.shutdown().await;
+
+    let done = store.get_recording(rec.id).expect("row kept");
+    assert_eq!(done.end, Some(start), "row must be closed");
+    assert_eq!((done.frames, done.size_bytes), (0, 0));
+    assert!(data_path.exists(), "unreadable file must be kept");
 }

@@ -15,3 +15,6 @@ serde = { version = "1.0.229", features = ["derive"] }
 ss-core = { version = "0.1.0", path = "../ss-core" }
 tokio = { version = "1.54.1", features = ["full"] }
 tracing = "0.1.44"
+
+[dev-dependencies]
+tempfile = "3.27.0"

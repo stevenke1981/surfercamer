@@ -166,6 +166,11 @@ pub fn parse_probe_matches(xml: &str) -> Vec<DiscoveredDevice> {
     devices
 }
 
+/// Consecutive receive errors after which discovery gives up.
+const MAX_RECV_ERRORS: u32 = 3;
+/// Pause between retries after a receive error.
+const RECV_ERROR_BACKOFF: Duration = Duration::from_millis(50);
+
 /// Send a probe and collect unique responses until `timeout`.
 pub async fn discover(timeout: Duration) -> Result<Vec<DiscoveredDevice>> {
     let socket = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)).await?;
@@ -191,14 +196,25 @@ pub async fn discover(timeout: Duration) -> Result<Vec<DiscoveredDevice>> {
     let mut seen = HashSet::new();
     let mut devices = Vec::new();
     let mut buf = vec![0u8; 64 * 1024];
+    let mut consecutive_errors = 0u32;
     loop {
         let received = match tokio::time::timeout_at(deadline, socket.recv_from(&mut buf)).await {
             Err(_) => break,
             Ok(Err(e)) => {
+                // A persistently failing socket must not spin: give up after a few errors.
+                consecutive_errors += 1;
                 tracing::debug!("ONVIF discovery receive error: {e}");
+                if consecutive_errors >= MAX_RECV_ERRORS {
+                    tracing::warn!("ONVIF discovery stopped after {consecutive_errors} receive errors");
+                    break;
+                }
+                tokio::time::sleep(RECV_ERROR_BACKOFF).await;
                 continue;
             }
-            Ok(Ok((n, _))) => n,
+            Ok(Ok((n, _))) => {
+                consecutive_errors = 0;
+                n
+            }
         };
         let text = String::from_utf8_lossy(&buf[..received]);
         for device in parse_probe_matches(&text) {
