@@ -29,11 +29,12 @@ impl CameraSource {
     pub fn redacted(&self) -> Self {
         let mut s = self.clone();
         match &mut s {
-            CameraSource::Rtsp { password, .. }
-            | CameraSource::Mjpeg { password, .. }
-            | CameraSource::Snapshot { password, .. } => {
+            CameraSource::Rtsp { url, password, .. }
+            | CameraSource::Mjpeg { url, password, .. }
+            | CameraSource::Snapshot { url, password, .. } => {
+                *url = crate::redact::strip_userinfo(url);
                 if password.is_some() {
-                    *password = Some("********".into());
+                    *password = Some(crate::redact::MASK.into());
                 }
             }
             CameraSource::Synthetic { .. } => {}
@@ -456,6 +457,8 @@ mod tests {
         let v = serde_json::to_value(s.redacted()).unwrap();
         assert_eq!(v["type"], "mjpeg");
         assert_eq!(v["password"], "********");
+        let s = CameraSource::Rtsp { url: "rtsp://a:b@cam/x".into(), username: None, password: None };
+        assert_eq!(serde_json::to_value(s.redacted()).unwrap()["url"], "rtsp://cam/x");
     }
 
     #[test]

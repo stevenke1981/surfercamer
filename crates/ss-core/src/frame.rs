@@ -65,6 +65,14 @@ impl FrameHub {
         self.with_channel(id, |ch| ch.latest.clone())
     }
 
+    /// Forget the latest frame (camera stopped or offline) so snapshots
+    /// don't serve stale images. Subscribers stay connected.
+    pub fn clear_latest(&self, id: CameraId) {
+        if let Some(ch) = self.inner.lock().expect("frame hub poisoned").get_mut(&id) {
+            ch.latest = None;
+        }
+    }
+
     /// Drop a camera's channel (on camera delete). Subscribers see `Closed`.
     pub fn remove(&self, id: CameraId) {
         self.inner.lock().expect("frame hub poisoned").remove(&id);

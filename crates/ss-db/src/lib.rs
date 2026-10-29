@@ -387,6 +387,20 @@ impl Store for SqliteStore {
         event_by_id(&conn, id)
     }
 
+    fn set_event_recording(&self, id: EventId, recording_id: RecordingId) -> Result<()> {
+        let conn = self.lock()?;
+        let n = conn
+            .execute(
+                "UPDATE events SET recording_id = ?2 WHERE id = ?1",
+                params![id, recording_id],
+            )
+            .map_err(db_err)?;
+        if n == 0 {
+            return Err(Error::NotFound(format!("event {id}")));
+        }
+        Ok(())
+    }
+
     fn delete_events_before(&self, before: DateTime<Utc>) -> Result<u64> {
         let conn = self.lock()?;
         let n = conn
@@ -515,6 +529,17 @@ impl Store for SqliteStore {
             return Err(Error::NotFound("session".into()));
         }
         Ok(())
+    }
+
+    fn delete_sessions_for_user(&self, user_id: UserId, except_token: Option<&str>) -> Result<u64> {
+        let conn = self.lock()?;
+        let n = conn
+            .execute(
+                "DELETE FROM sessions WHERE user_id = ?1 AND token IS NOT ?2",
+                params![user_id, except_token],
+            )
+            .map_err(db_err)?;
+        Ok(n as u64)
     }
 
     fn purge_expired_sessions(&self, now: DateTime<Utc>) -> Result<u64> {

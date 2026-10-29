@@ -794,3 +794,33 @@ fn deleting_camera_cascades_to_recordings_and_events() {
     assert_eq!(evs.len(), 2);
     assert!(evs.iter().all(|e| e.camera_id != Some(cam.id)));
 }
+
+#[test]
+fn delete_sessions_for_user_keeps_excepted_token() {
+    let s = store();
+    let u = s.create_user("u", "h", Role::Viewer).unwrap();
+    let other = s.create_user("o", "h", Role::Viewer).unwrap();
+    for t in ["a", "b", "c"] {
+        s.create_session(&session(t, u.id, Duration::hours(1))).unwrap();
+    }
+    s.create_session(&session("x", other.id, Duration::hours(1))).unwrap();
+    assert_eq!(s.delete_sessions_for_user(u.id, Some("b")).unwrap(), 2);
+    assert!(s.get_session("b").is_ok());
+    assert!(s.get_session("x").is_ok());
+    assert_eq!(s.delete_sessions_for_user(u.id, None).unwrap(), 1);
+    assert!(matches!(s.get_session("b"), Err(Error::NotFound(_))));
+}
+
+#[test]
+fn set_event_recording_links_event() {
+    let s = store();
+    let cam = s.create_camera(&cam_input("c")).unwrap();
+    let rec = s
+        .create_recording(&new_rec(cam.id, "cam1/r.mjpg", Utc::now(), RecordingTrigger::Motion))
+        .unwrap();
+    let ev = s.create_event(&new_event(Some(cam.id), EventKind::Motion, Utc::now())).unwrap();
+    s.set_event_recording(ev.id, rec.id).unwrap();
+    let listed = s.list_events(&EventQuery::default()).unwrap();
+    assert_eq!(listed[0].recording_id, Some(rec.id));
+    assert!(matches!(s.set_event_recording(9999, rec.id), Err(Error::NotFound(_))));
+}

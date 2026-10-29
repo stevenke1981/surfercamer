@@ -7,6 +7,7 @@
 pub mod error;
 pub mod frame;
 pub mod model;
+pub mod redact;
 pub mod schedule;
 pub mod store;
 
