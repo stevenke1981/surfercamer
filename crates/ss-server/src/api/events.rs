@@ -14,6 +14,7 @@ use tokio::sync::broadcast::error::RecvError;
 
 use crate::auth::Viewer;
 use crate::error::{ApiQuery, ApiResult};
+use crate::stream::bounded;
 use crate::AppState;
 
 pub fn routes() -> Router<AppState> {
@@ -23,16 +24,27 @@ pub fn routes() -> Router<AppState> {
         .route("/events/{id}/ack", post(ack_event))
 }
 
-async fn list_events(State(st): State<AppState>, _v: Viewer, ApiQuery(q): ApiQuery<EventQuery>) -> ApiResult<Json<Vec<Event>>> {
+async fn list_events(
+    State(st): State<AppState>,
+    _v: Viewer,
+    ApiQuery(q): ApiQuery<EventQuery>,
+) -> ApiResult<Json<Vec<Event>>> {
     Ok(Json(st.store.list_events(&q)?))
 }
 
-async fn ack_event(State(st): State<AppState>, _v: Viewer, Path(id): Path<EventId>) -> ApiResult<Json<Event>> {
+async fn ack_event(
+    State(st): State<AppState>,
+    _v: Viewer,
+    Path(id): Path<EventId>,
+) -> ApiResult<Json<Event>> {
     Ok(Json(st.store.acknowledge_event(id)?))
 }
 
 /// Server-sent events: `event: <kind>`, `data: <Event JSON>`.
-async fn stream_events(State(st): State<AppState>, _v: Viewer) -> Sse<impl Stream<Item = Result<SseEvent, Infallible>>> {
+async fn stream_events(
+    State(st): State<AppState>,
+    Viewer(me): Viewer,
+) -> Sse<impl Stream<Item = Result<SseEvent, Infallible>>> {
     let rx = st.engine.subscribe_events();
     let events = stream::unfold(rx, |mut rx| async move {
         loop {
@@ -49,5 +61,9 @@ async fn stream_events(State(st): State<AppState>, _v: Viewer) -> Sse<impl Strea
             }
         }
     });
-    Sse::new(events).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("keep-alive"))
+    Sse::new(bounded(&st, me.token, events)).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    )
 }

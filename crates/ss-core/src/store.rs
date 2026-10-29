@@ -19,7 +19,13 @@ pub trait Store: Send + Sync + 'static {
 
     // recordings
     fn create_recording(&self, rec: &NewRecording) -> Result<Recording>;
-    fn finish_recording(&self, id: RecordingId, end: DateTime<Utc>, frames: u64, size_bytes: u64) -> Result<Recording>;
+    fn finish_recording(
+        &self,
+        id: RecordingId,
+        end: DateTime<Utc>,
+        frames: u64,
+        size_bytes: u64,
+    ) -> Result<Recording>;
     fn get_recording(&self, id: RecordingId) -> Result<Recording>;
     /// Ordered by `start` descending.
     fn list_recordings(&self, q: &RecordingQuery) -> Result<Vec<Recording>>;
@@ -45,7 +51,12 @@ pub trait Store: Send + Sync + 'static {
     fn get_user_by_name(&self, username: &str) -> Result<User>;
     fn list_users(&self) -> Result<Vec<User>>;
     /// `None` fields are left unchanged.
-    fn update_user(&self, id: UserId, password_hash: Option<&str>, role: Option<Role>) -> Result<User>;
+    fn update_user(
+        &self,
+        id: UserId,
+        password_hash: Option<&str>,
+        role: Option<Role>,
+    ) -> Result<User>;
     fn delete_user(&self, id: UserId) -> Result<()>;
     fn count_users(&self) -> Result<u64>;
 

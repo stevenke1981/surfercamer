@@ -7,20 +7,28 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use ss_core::{Role, User, UserId};
 
-use crate::auth::{check_password_policy, hash_password_async, Admin, CurrentUser};
+use crate::auth::{check_password_policy, hash_password_async, Admin};
 use crate::error::{ApiError, ApiJson, ApiResult};
 use crate::AppState;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/users", get(list_users).post(create_user))
-        .route("/users/{id}", axum::routing::put(update_user).delete(delete_user))
+        .route(
+            "/users/{id}",
+            axum::routing::put(update_user).delete(delete_user),
+        )
 }
 
 const USERNAME_MAX: usize = 64;
 
 fn admin_count(st: &AppState) -> ApiResult<usize> {
-    Ok(st.store.list_users()?.iter().filter(|u| u.role == Role::Admin).count())
+    Ok(st
+        .store
+        .list_users()?
+        .iter()
+        .filter(|u| u.role == Role::Admin)
+        .count())
 }
 
 async fn list_users(State(st): State<AppState>, _a: Admin) -> ApiResult<Json<Vec<User>>> {
@@ -34,10 +42,16 @@ pub struct NewUser {
     pub role: Role,
 }
 
-async fn create_user(State(st): State<AppState>, _a: Admin, ApiJson(req): ApiJson<NewUser>) -> ApiResult<(StatusCode, Json<User>)> {
+async fn create_user(
+    State(st): State<AppState>,
+    _a: Admin,
+    ApiJson(req): ApiJson<NewUser>,
+) -> ApiResult<(StatusCode, Json<User>)> {
     let username = req.username.trim();
     if username.is_empty() || username.len() > USERNAME_MAX {
-        return Err(ApiError::invalid(format!("username must be 1..={USERNAME_MAX} characters")));
+        return Err(ApiError::invalid(format!(
+            "username must be 1..={USERNAME_MAX} characters"
+        )));
     }
     check_password_policy(&req.password)?;
     let hash = hash_password_async(req.password).await?;
@@ -53,7 +67,7 @@ pub struct UserUpdate {
 
 async fn update_user(
     State(st): State<AppState>,
-    _a: Admin,
+    Admin(me): Admin,
     Path(id): Path<UserId>,
     ApiJson(req): ApiJson<UserUpdate>,
 ) -> ApiResult<Json<User>> {
@@ -66,14 +80,27 @@ async fn update_user(
             return Err(ApiError::conflict("cannot demote the last admin"));
         }
     }
+    let role_changed = req.role.is_some_and(|r| r != target.role);
+    let password_changed = req.password.is_some();
     let hash = match req.password {
         Some(pw) => Some(hash_password_async(pw).await?),
         None => None,
     };
-    Ok(Json(st.store.update_user(id, hash.as_deref(), req.role)?))
+    let user = st.store.update_user(id, hash.as_deref(), req.role)?;
+    if password_changed || role_changed {
+        // Revoke the target's sessions. An admin editing their own account
+        // keeps the session they are using.
+        let keep = (id == me.user.id).then_some(me.token.as_str());
+        st.store.delete_sessions_for_user(id, keep)?;
+    }
+    Ok(Json(user))
 }
 
-async fn delete_user(State(st): State<AppState>, me: CurrentUser, Path(id): Path<UserId>) -> ApiResult<StatusCode> {
+async fn delete_user(
+    State(st): State<AppState>,
+    Admin(me): Admin,
+    Path(id): Path<UserId>,
+) -> ApiResult<StatusCode> {
     let target = st.store.get_user(id)?;
     if me.user.id == id {
         return Err(ApiError::conflict("cannot delete your own account"));

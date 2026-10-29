@@ -22,7 +22,11 @@ pub struct ApiError {
 
 impl ApiError {
     fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
-        Self { status, code, message: message.into() }
+        Self {
+            status,
+            code,
+            message: message.into(),
+        }
     }
 
     pub fn invalid(message: impl Into<String>) -> Self {
@@ -42,7 +46,20 @@ impl ApiError {
     }
 
     pub fn forbidden() -> Self {
-        Self::new(StatusCode::FORBIDDEN, "forbidden", "insufficient role for this operation")
+        Self::new(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "insufficient role for this operation",
+        )
+    }
+
+    /// Cookie-authenticated unsafe request without `X-Requested-With: ss`.
+    pub fn csrf_required() -> Self {
+        Self::new(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "missing X-Requested-With header for cookie-authenticated request",
+        )
     }
 
     pub fn too_many_requests(message: impl Into<String>) -> Self {
@@ -56,7 +73,11 @@ impl ApiError {
     /// Generic 500; the real cause is logged, never returned.
     pub fn internal(cause: impl std::fmt::Display) -> Self {
         tracing::error!(error = %cause, "internal error");
-        Self::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal server error")
+        Self::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            "internal server error",
+        )
     }
 }
 

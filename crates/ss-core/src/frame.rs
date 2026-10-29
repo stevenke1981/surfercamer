@@ -84,7 +84,13 @@ mod tests {
     use super::*;
 
     fn frame(id: CameraId) -> Frame {
-        Frame { camera_id: id, ts: Utc::now(), jpeg: Bytes::from_static(b"x"), width: 1, height: 1 }
+        Frame {
+            camera_id: id,
+            ts: Utc::now(),
+            jpeg: Bytes::from_static(b"x"),
+            width: 1,
+            height: 1,
+        }
     }
 
     #[tokio::test]

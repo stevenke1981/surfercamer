@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use ss_core::User;
 
 use crate::auth::{
-    check_password_policy, clear_session_cookie, create_session,
-    hash_password_async, session_cookie, verify_password_async, CurrentUser,
+    check_password_policy, clear_session_cookie, create_session, hash_password_async,
+    session_cookie, verify_login_async, verify_password_async, CurrentUser,
 };
 use crate::error::{ApiError, ApiJson, ApiResult};
 use crate::AppState;
@@ -37,32 +37,38 @@ pub struct LoginResponse {
     pub expires_at: DateTime<Utc>,
 }
 
-async fn login(State(st): State<AppState>, ApiJson(req): ApiJson<LoginRequest>) -> ApiResult<Response> {
-    let key = req.username.trim().to_lowercase();
-    if st.logins.is_blocked(&key) {
-        return Err(ApiError::too_many_requests("too many failed logins; try again in a few minutes"));
-    }
-    let user = match st.store.get_user_by_name(req.username.trim()) {
+async fn login(
+    State(st): State<AppState>,
+    ApiJson(req): ApiJson<LoginRequest>,
+) -> ApiResult<Response> {
+    let username = req.username.trim();
+    // Reserve the attempt before any password work so parallel guesses are counted.
+    let attempt = st.logins.begin(&username.to_lowercase()).ok_or_else(|| {
+        ApiError::too_many_requests("too many failed logins; try again in a few minutes")
+    })?;
+    let user = match st.store.get_user_by_name(username) {
         Ok(u) => Some(u),
         Err(ss_core::Error::NotFound(_)) => None,
         Err(e) => return Err(e.into()),
     };
-    let ok = match &user {
-        Some(u) => verify_password_async(req.password.clone(), u.password_hash.clone()).await?,
-        None => false,
-    };
-    let user = match (ok, user) {
-        (true, Some(u)) => u,
+    let phc = user.as_ref().map(|u| u.password_hash.clone());
+    let ok = verify_login_async(req.password, phc).await?;
+    let user = match user {
+        Some(u) if ok => u,
         _ => {
-            st.logins.record_failure(&key);
+            attempt.failed();
             return Err(ApiError::unauthorized("invalid username or password"));
         }
     };
-    st.logins.record_success(&key);
+    attempt.succeeded();
     let session = create_session(st.store.as_ref(), &user)?;
     let max_age = (session.expires_at - session.created_at).num_seconds();
     let cookie = session_cookie(&session.token, max_age);
-    let body = LoginResponse { token: session.token, user, expires_at: session.expires_at };
+    let body = LoginResponse {
+        token: session.token,
+        user,
+        expires_at: session.expires_at,
+    };
     Ok(([(header::SET_COOKIE, cookie)], Json(body)).into_response())
 }
 
@@ -71,7 +77,11 @@ async fn logout(State(st): State<AppState>, me: CurrentUser) -> ApiResult<Respon
         Ok(()) | Err(ss_core::Error::NotFound(_)) => {}
         Err(e) => return Err(e.into()),
     }
-    Ok(([(header::SET_COOKIE, clear_session_cookie())], StatusCode::NO_CONTENT).into_response())
+    Ok((
+        [(header::SET_COOKIE, clear_session_cookie())],
+        StatusCode::NO_CONTENT,
+    )
+        .into_response())
 }
 
 async fn me(me: CurrentUser) -> Json<User> {
@@ -95,5 +105,8 @@ async fn change_password(
     check_password_policy(&req.new_password)?;
     let hash = hash_password_async(req.new_password).await?;
     st.store.update_user(me.user.id, Some(&hash), None)?;
+    // Other sessions (possibly stolen ones) end; this one stays signed in.
+    st.store
+        .delete_sessions_for_user(me.user.id, Some(&me.token))?;
     Ok(StatusCode::NO_CONTENT)
 }

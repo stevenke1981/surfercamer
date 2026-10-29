@@ -188,7 +188,10 @@ impl Engine {
             Ok(cameras) => cameras.iter().map(|c| self.status(c.id)).collect(),
             Err(e) => {
                 warn!(error = %e, "could not list cameras for status");
-                lock(&self.inner.workers).values().map(|w| (*lock(&w.shared.status)).clone()).collect()
+                lock(&self.inner.workers)
+                    .values()
+                    .map(|w| (*lock(&w.shared.status)).clone())
+                    .collect()
             }
         }
     }
@@ -261,12 +264,16 @@ impl Engine {
 
     /// Manual-recording flag of the running worker for `id`, if any.
     fn worker_manual(&self, id: CameraId) -> bool {
-        lock(&self.inner.workers).get(&id).is_some_and(|w| lock(&w.shared.policy).manual())
+        lock(&self.inner.workers)
+            .get(&id)
+            .is_some_and(|w| lock(&w.shared.policy).manual())
     }
 
     /// Bytes in the camera's open segment (0 when not recording).
     fn open_bytes(&self, id: CameraId) -> u64 {
-        lock(&self.inner.workers).get(&id).map_or(0, |w| w.shared.open_bytes.load(Ordering::Relaxed))
+        lock(&self.inner.workers)
+            .get(&id)
+            .map_or(0, |w| w.shared.open_bytes.load(Ordering::Relaxed))
     }
 
     /// Spawn a worker for `camera` and register it. Caller holds `lifecycle`.
@@ -276,7 +283,10 @@ impl Engine {
         info!(camera = id, "camera worker started");
         let previous = lock(&self.inner.workers).insert(id, worker);
         if let Some(previous) = previous {
-            warn!(camera = id, "replaced a camera worker that was still registered");
+            warn!(
+                camera = id,
+                "replaced a camera worker that was still registered"
+            );
             tokio::spawn(previous.task.stop());
         }
     }
@@ -299,7 +309,10 @@ impl Engine {
         }
         let (stop, rx) = watch::channel(false);
         let handle = tokio::spawn(retention_loop(self.clone(), rx));
-        *slot = Some(Task { stop, handles: vec![handle] });
+        *slot = Some(Task {
+            stop,
+            handles: vec![handle],
+        });
     }
 
     /// Finish recordings left open by a crash: use the segment's index for the
@@ -344,10 +357,15 @@ impl Engine {
                     let frames = entries.len() as u64;
                     let size = entries.iter().map(|e| u64::from(e.len)).sum::<u64>()
                         + frames * INDEX_RECORD_SIZE as u64;
-                    let end = rec.start + chrono::Duration::milliseconds(i64::from(reader.duration_ms()));
+                    let end =
+                        rec.start + chrono::Duration::milliseconds(i64::from(reader.duration_ms()));
                     match store.finish_recording(rec.id, end, frames, size) {
-                        Ok(_) => info!(recording = rec.id, frames, "recovered unfinished recording"),
-                        Err(e) => warn!(recording = rec.id, error = %e, "could not finish recovered recording"),
+                        Ok(_) => {
+                            info!(recording = rec.id, frames, "recovered unfinished recording")
+                        }
+                        Err(e) => {
+                            warn!(recording = rec.id, error = %e, "could not finish recovered recording")
+                        }
                     }
                 }
                 Err(Error::NotFound(_)) => discard("segment file missing"),
@@ -370,7 +388,9 @@ async fn retention_loop(engine: Engine, mut stop: watch::Receiver<bool>) {
         let interval = engine
             .store()
             .get_settings()
-            .map_or(Settings::default().retention_interval_seconds, |s| s.retention_interval_seconds)
+            .map_or(Settings::default().retention_interval_seconds, |s| {
+                s.retention_interval_seconds
+            })
             .max(MIN_RETENTION_INTERVAL_SECS);
         tokio::select! {
             _ = stop.changed() => break,

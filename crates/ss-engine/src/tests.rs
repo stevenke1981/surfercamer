@@ -20,7 +20,11 @@ fn synthetic(name: &str, schedule: Schedule, enabled: bool, motion: MotionConfig
     CameraInput {
         name: name.into(),
         enabled,
-        source: CameraSource::Synthetic { width: 160, height: 120, fps: 10 },
+        source: CameraSource::Synthetic {
+            width: 160,
+            height: 120,
+            fps: 10,
+        },
         recording: RecordingConfig {
             schedule,
             segment_seconds: 10,
@@ -34,7 +38,12 @@ fn synthetic(name: &str, schedule: Schedule, enabled: bool, motion: MotionConfig
 }
 
 fn engine_in(store: &Arc<dyn Store>, dir: &Path) -> Engine {
-    Engine::new(store.clone(), EngineConfig { storage_root: dir.to_path_buf() })
+    Engine::new(
+        store.clone(),
+        EngineConfig {
+            storage_root: dir.to_path_buf(),
+        },
+    )
 }
 
 /// Poll `cond` every 50 ms for up to `secs` seconds.
@@ -51,7 +60,10 @@ async fn wait_for(secs: u64, mut cond: impl FnMut() -> bool) -> bool {
 
 fn recordings_of(store: &Arc<dyn Store>, camera_id: CameraId) -> Vec<Recording> {
     store
-        .list_recordings(&RecordingQuery { camera_id: Some(camera_id), ..Default::default() })
+        .list_recordings(&RecordingQuery {
+            camera_id: Some(camera_id),
+            ..Default::default()
+        })
         .expect("list recordings")
 }
 
@@ -68,21 +80,38 @@ fn drain_events(rx: &mut tokio::sync::broadcast::Receiver<Event>) -> Vec<Event> 
 }
 
 /// Write a finished segment with three frames at `start` and return its path and summary.
-fn write_segment(root: &Path, camera_id: CameraId, start: DateTime<Utc>) -> (String, ss_recorder::segment::SegmentSummary) {
+fn write_segment(
+    root: &Path,
+    camera_id: CameraId,
+    start: DateTime<Utc>,
+) -> (String, ss_recorder::segment::SegmentSummary) {
     let rel = segment_rel_path(camera_id, start);
     let mut w = SegmentWriter::create(root, &rel, start).expect("create segment");
     for i in 0..3 {
-        w.write_frame(start + ChronoDuration::milliseconds(i * 100), b"\xFF\xD8test\xFF\xD9")
-            .expect("write frame");
+        w.write_frame(
+            start + ChronoDuration::milliseconds(i * 100),
+            b"\xFF\xD8test\xFF\xD9",
+        )
+        .expect("write frame");
     }
     (rel, w.finish().expect("finish segment"))
 }
 
 /// Finished recording row backed by a real segment file.
-fn finished_recording(store: &Arc<dyn Store>, root: &Path, camera_id: CameraId, start: DateTime<Utc>) -> Recording {
+fn finished_recording(
+    store: &Arc<dyn Store>,
+    root: &Path,
+    camera_id: CameraId,
+    start: DateTime<Utc>,
+) -> Recording {
     let (rel, summary) = write_segment(root, camera_id, start);
     let rec = store
-        .create_recording(&NewRecording { camera_id, path: rel, start, trigger: RecordingTrigger::Continuous })
+        .create_recording(&NewRecording {
+            camera_id,
+            path: rel,
+            start,
+            trigger: RecordingTrigger::Continuous,
+        })
         .expect("create recording");
     store
         .finish_recording(rec.id, summary.end, summary.frames, summary.size_bytes)
@@ -107,7 +136,12 @@ async fn disabled_camera_appears_in_statuses_as_disabled() {
     let dir = tempfile::tempdir().unwrap();
     let store = new_store();
     let cam = store
-        .create_camera(&synthetic("off", Schedule::default(), false, MotionConfig::default()))
+        .create_camera(&synthetic(
+            "off",
+            Schedule::default(),
+            false,
+            MotionConfig::default(),
+        ))
         .unwrap();
     let engine = engine_in(&store, dir.path());
     engine.start().await.unwrap();
@@ -122,15 +156,28 @@ async fn disabled_camera_appears_in_statuses_as_disabled() {
 async fn synthetic_camera_goes_online_records_and_shutdown_finishes() {
     let dir = tempfile::tempdir().unwrap();
     let store = new_store();
-    let motion = MotionConfig { enabled: false, ..MotionConfig::default() };
+    let motion = MotionConfig {
+        enabled: false,
+        ..MotionConfig::default()
+    };
     let cam = store
-        .create_camera(&synthetic("front", Schedule::uniform(ScheduleMode::Continuous), true, motion))
+        .create_camera(&synthetic(
+            "front",
+            Schedule::uniform(ScheduleMode::Continuous),
+            true,
+            motion,
+        ))
         .unwrap();
     let engine = engine_in(&store, dir.path());
     let mut events = engine.subscribe_events();
     engine.start().await.unwrap();
 
-    assert!(wait_for(10, || engine.status(cam.id).state == ConnectionState::Online).await, "camera never went online");
+    assert!(
+        wait_for(10, || engine.status(cam.id).state
+            == ConnectionState::Online)
+        .await,
+        "camera never went online"
+    );
     let mut frames = engine.frames().subscribe(cam.id);
     let got = tokio::time::timeout(Duration::from_secs(5), async {
         for _ in 0..5 {
@@ -141,7 +188,10 @@ async fn synthetic_camera_goes_online_records_and_shutdown_finishes() {
     assert!(got.is_ok(), "fewer than 5 frames published");
     assert!(engine.frames().latest(cam.id).is_some());
 
-    assert!(wait_for(5, || !recordings_of(&store, cam.id).is_empty()).await, "no recording row");
+    assert!(
+        wait_for(5, || !recordings_of(&store, cam.id).is_empty()).await,
+        "no recording row"
+    );
     let st = engine.status(cam.id);
     assert!(st.recording);
     assert_eq!(st.recording_trigger, Some(RecordingTrigger::Continuous));
@@ -165,7 +215,9 @@ async fn synthetic_camera_goes_online_records_and_shutdown_finishes() {
     assert_eq!(&first[..2], &[0xFF, 0xD8], "frame is not a JPEG");
 
     let evs = drain_events(&mut events);
-    assert!(evs.iter().any(|e| e.kind == EventKind::RecordingStarted && e.camera_id == Some(cam.id)));
+    assert!(evs
+        .iter()
+        .any(|e| e.kind == EventKind::RecordingStarted && e.camera_id == Some(cam.id)));
     assert_eq!(engine.status(cam.id).state, ConnectionState::Disabled);
 }
 
@@ -173,9 +225,17 @@ async fn synthetic_camera_goes_online_records_and_shutdown_finishes() {
 async fn motion_schedule_produces_motion_events_and_motion_recording() {
     let dir = tempfile::tempdir().unwrap();
     let store = new_store();
-    let motion = MotionConfig { cooldown_seconds: 1, ..MotionConfig::default() };
+    let motion = MotionConfig {
+        cooldown_seconds: 1,
+        ..MotionConfig::default()
+    };
     let cam = store
-        .create_camera(&synthetic("moving", Schedule::uniform(ScheduleMode::Motion), true, motion))
+        .create_camera(&synthetic(
+            "moving",
+            Schedule::uniform(ScheduleMode::Motion),
+            true,
+            motion,
+        ))
         .unwrap();
     let engine = engine_in(&store, dir.path());
     let mut events = engine.subscribe_events();
@@ -183,27 +243,56 @@ async fn motion_schedule_produces_motion_events_and_motion_recording() {
 
     let mut seen_motion = Vec::new();
     let found = wait_for(15, || {
-        seen_motion.extend(drain_events(&mut events).into_iter().filter(|e| e.kind == EventKind::Motion));
-        recordings_of(&store, cam.id).iter().any(|r| r.trigger == RecordingTrigger::Motion)
+        seen_motion.extend(
+            drain_events(&mut events)
+                .into_iter()
+                .filter(|e| e.kind == EventKind::Motion),
+        );
+        recordings_of(&store, cam.id)
+            .iter()
+            .any(|r| r.trigger == RecordingTrigger::Motion)
     })
     .await;
     assert!(found, "no motion recording within 15 s");
-    seen_motion.extend(drain_events(&mut events).into_iter().filter(|e| e.kind == EventKind::Motion));
+    seen_motion.extend(
+        drain_events(&mut events)
+            .into_iter()
+            .filter(|e| e.kind == EventKind::Motion),
+    );
     assert!(!seen_motion.is_empty(), "no motion events emitted");
-    assert!(seen_motion.iter().all(|e| e.camera_id == Some(cam.id) && e.score > 0.0));
+    assert!(seen_motion
+        .iter()
+        .all(|e| e.camera_id == Some(cam.id) && e.score > 0.0));
 
     engine.shutdown().await;
     let recs = recordings_of(&store, cam.id);
-    assert!(recs.iter().filter(|r| r.trigger == RecordingTrigger::Motion).all(|r| r.end.is_some()));
-    assert!(recs.iter().all(|r| r.trigger == RecordingTrigger::Motion), "unexpected trigger in {recs:?}");
+    assert!(recs
+        .iter()
+        .filter(|r| r.trigger == RecordingTrigger::Motion)
+        .all(|r| r.end.is_some()));
+    assert!(
+        recs.iter().all(|r| r.trigger == RecordingTrigger::Motion),
+        "unexpected trigger in {recs:?}"
+    );
 
     // The first motion event starts the motion recording; it must be linked to it.
     let stored = store
-        .list_events(&EventQuery { camera_id: Some(cam.id), kind: Some(EventKind::Motion), ..Default::default() })
+        .list_events(&EventQuery {
+            camera_id: Some(cam.id),
+            kind: Some(EventKind::Motion),
+            ..Default::default()
+        })
         .expect("list events");
-    let first = stored.iter().min_by_key(|e| e.at).expect("stored motion event");
-    let linked = first.recording_id.expect("first motion event must reference its recording");
-    let rec = store.get_recording(linked).expect("linked recording exists");
+    let first = stored
+        .iter()
+        .min_by_key(|e| e.at)
+        .expect("stored motion event");
+    let linked = first
+        .recording_id
+        .expect("first motion event must reference its recording");
+    let rec = store
+        .get_recording(linked)
+        .expect("linked recording exists");
     assert_eq!(rec.trigger, RecordingTrigger::Motion);
     assert_eq!(rec.camera_id, cam.id);
 }
@@ -212,35 +301,70 @@ async fn motion_schedule_produces_motion_events_and_motion_recording() {
 async fn manual_recording_on_schedule_none_camera() {
     let dir = tempfile::tempdir().unwrap();
     let store = new_store();
-    let motion = MotionConfig { enabled: false, ..MotionConfig::default() };
+    let motion = MotionConfig {
+        enabled: false,
+        ..MotionConfig::default()
+    };
     let cam = store
-        .create_camera(&synthetic("manual", Schedule::uniform(ScheduleMode::None), true, motion))
+        .create_camera(&synthetic(
+            "manual",
+            Schedule::uniform(ScheduleMode::None),
+            true,
+            motion,
+        ))
         .unwrap();
     let off = store
-        .create_camera(&synthetic("off", Schedule::default(), false, MotionConfig::default()))
+        .create_camera(&synthetic(
+            "off",
+            Schedule::default(),
+            false,
+            MotionConfig::default(),
+        ))
         .unwrap();
     let engine = engine_in(&store, dir.path());
     engine.start().await.unwrap();
-    assert!(wait_for(10, || engine.status(cam.id).state == ConnectionState::Online).await);
+    assert!(
+        wait_for(10, || engine.status(cam.id).state
+            == ConnectionState::Online)
+        .await
+    );
 
     tokio::time::sleep(Duration::from_millis(800)).await;
-    assert!(recordings_of(&store, cam.id).is_empty(), "schedule None must not record");
+    assert!(
+        recordings_of(&store, cam.id).is_empty(),
+        "schedule None must not record"
+    );
     assert!(!engine.status(cam.id).recording);
 
     engine.set_manual_recording(cam.id, true).await.unwrap();
-    assert!(wait_for(5, || engine.status(cam.id).recording).await, "manual recording did not start");
-    assert_eq!(engine.status(cam.id).recording_trigger, Some(RecordingTrigger::Manual));
+    assert!(
+        wait_for(5, || engine.status(cam.id).recording).await,
+        "manual recording did not start"
+    );
+    assert_eq!(
+        engine.status(cam.id).recording_trigger,
+        Some(RecordingTrigger::Manual)
+    );
     tokio::time::sleep(Duration::from_millis(800)).await;
 
     engine.set_manual_recording(cam.id, false).await.unwrap();
-    assert!(wait_for(5, || !engine.status(cam.id).recording).await, "manual recording did not stop");
+    assert!(
+        wait_for(5, || !engine.status(cam.id).recording).await,
+        "manual recording did not stop"
+    );
     let recs = recordings_of(&store, cam.id);
     assert_eq!(recs.len(), 1);
     assert_eq!(recs[0].trigger, RecordingTrigger::Manual);
     assert!(recs[0].end.is_some() && recs[0].frames > 0);
 
-    assert!(matches!(engine.set_manual_recording(off.id, true).await, Err(Error::Invalid(_))));
-    assert!(matches!(engine.set_manual_recording(999_999, true).await, Err(Error::NotFound(_))));
+    assert!(matches!(
+        engine.set_manual_recording(off.id, true).await,
+        Err(Error::Invalid(_))
+    ));
+    assert!(matches!(
+        engine.set_manual_recording(999_999, true).await,
+        Err(Error::NotFound(_))
+    ));
     engine.shutdown().await;
 }
 
@@ -248,12 +372,24 @@ async fn manual_recording_on_schedule_none_camera() {
 async fn reload_with_camera_disabled_stops_worker() {
     let dir = tempfile::tempdir().unwrap();
     let store = new_store();
-    let motion = MotionConfig { enabled: false, ..MotionConfig::default() };
-    let input = synthetic("toggle", Schedule::uniform(ScheduleMode::Continuous), true, motion.clone());
+    let motion = MotionConfig {
+        enabled: false,
+        ..MotionConfig::default()
+    };
+    let input = synthetic(
+        "toggle",
+        Schedule::uniform(ScheduleMode::Continuous),
+        true,
+        motion.clone(),
+    );
     let cam = store.create_camera(&input).unwrap();
     let engine = engine_in(&store, dir.path());
     engine.start().await.unwrap();
-    assert!(wait_for(10, || engine.status(cam.id).state == ConnectionState::Online).await);
+    assert!(
+        wait_for(10, || engine.status(cam.id).state
+            == ConnectionState::Online)
+        .await
+    );
 
     let mut disabled = input.clone();
     disabled.enabled = false;
@@ -261,18 +397,28 @@ async fn reload_with_camera_disabled_stops_worker() {
     engine.reload_camera(cam.id).await.unwrap();
 
     assert_eq!(engine.status(cam.id).state, ConnectionState::Disabled);
-    assert!(!engine.has_worker(cam.id), "worker still registered after disable");
+    assert!(
+        !engine.has_worker(cam.id),
+        "worker still registered after disable"
+    );
     assert!(!engine.status(cam.id).recording);
     // No more frames once stopped.
     let before = engine.frames().latest(cam.id).map(|f| f.ts);
     tokio::time::sleep(Duration::from_millis(400)).await;
     let after = engine.frames().latest(cam.id).map(|f| f.ts);
-    assert_eq!(before, after, "frames still arriving after the worker stopped");
+    assert_eq!(
+        before, after,
+        "frames still arriving after the worker stopped"
+    );
 
     // Re-enabling starts a worker again.
     store.update_camera(cam.id, &input).unwrap();
     engine.reload_camera(cam.id).await.unwrap();
-    assert!(wait_for(10, || engine.status(cam.id).state == ConnectionState::Online).await);
+    assert!(
+        wait_for(10, || engine.status(cam.id).state
+            == ConnectionState::Online)
+        .await
+    );
     engine.shutdown().await;
 }
 
@@ -281,14 +427,24 @@ async fn start_recovers_dangling_recordings() {
     let dir = tempfile::tempdir().unwrap();
     let store = new_store();
     let cam = store
-        .create_camera(&synthetic("crashed", Schedule::default(), false, MotionConfig::default()))
+        .create_camera(&synthetic(
+            "crashed",
+            Schedule::default(),
+            false,
+            MotionConfig::default(),
+        ))
         .unwrap();
     let start = Utc.with_ymd_and_hms(2026, 5, 1, 10, 0, 0).unwrap();
 
     // Crash survivor: file exists, row never finished.
     let (rel, summary) = write_segment(dir.path(), cam.id, start);
     let survivor = store
-        .create_recording(&NewRecording { camera_id: cam.id, path: rel.clone(), start, trigger: RecordingTrigger::Motion })
+        .create_recording(&NewRecording {
+            camera_id: cam.id,
+            path: rel.clone(),
+            start,
+            trigger: RecordingTrigger::Motion,
+        })
         .unwrap();
     // Row whose file never made it to disk.
     let ghost = store
@@ -320,7 +476,12 @@ async fn retention_deletes_old_unlocked_and_keeps_locked() {
     let dir = tempfile::tempdir().unwrap();
     let store = new_store();
     let cam = store
-        .create_camera(&synthetic("keep", Schedule::default(), false, MotionConfig::default()))
+        .create_camera(&synthetic(
+            "keep",
+            Schedule::default(),
+            false,
+            MotionConfig::default(),
+        ))
         .unwrap();
     let now = Utc::now();
     let old = finished_recording(&store, dir.path(), cam.id, now - ChronoDuration::days(60));
@@ -332,11 +493,26 @@ async fn retention_deletes_old_unlocked_and_keeps_locked() {
     let deleted = engine.run_retention().await.unwrap();
     assert_eq!(deleted, 1);
 
-    assert!(store.get_recording(old.id).is_err(), "old unlocked row should be gone");
-    assert!(!dir.path().join(&old.path).exists(), "old unlocked file should be gone");
-    assert!(store.get_recording(old_locked.id).is_ok(), "locked row must stay");
-    assert!(dir.path().join(&old_locked.path).exists(), "locked file must stay");
-    assert!(store.get_recording(recent.id).is_ok(), "recent row must stay");
+    assert!(
+        store.get_recording(old.id).is_err(),
+        "old unlocked row should be gone"
+    );
+    assert!(
+        !dir.path().join(&old.path).exists(),
+        "old unlocked file should be gone"
+    );
+    assert!(
+        store.get_recording(old_locked.id).is_ok(),
+        "locked row must stay"
+    );
+    assert!(
+        dir.path().join(&old_locked.path).exists(),
+        "locked file must stay"
+    );
+    assert!(
+        store.get_recording(recent.id).is_ok(),
+        "recent row must stay"
+    );
     assert!(dir.path().join(&recent.path).exists());
 
     // Second sweep finds nothing to do.
@@ -347,16 +523,31 @@ async fn retention_deletes_old_unlocked_and_keeps_locked() {
 async fn manual_recording_survives_reload() {
     let dir = tempfile::tempdir().unwrap();
     let store = new_store();
-    let motion = MotionConfig { enabled: false, ..MotionConfig::default() };
+    let motion = MotionConfig {
+        enabled: false,
+        ..MotionConfig::default()
+    };
     let cam = store
-        .create_camera(&synthetic("manual-reload", Schedule::uniform(ScheduleMode::None), true, motion))
+        .create_camera(&synthetic(
+            "manual-reload",
+            Schedule::uniform(ScheduleMode::None),
+            true,
+            motion,
+        ))
         .unwrap();
     let engine = engine_in(&store, dir.path());
     engine.start().await.unwrap();
-    assert!(wait_for(10, || engine.status(cam.id).state == ConnectionState::Online).await);
+    assert!(
+        wait_for(10, || engine.status(cam.id).state
+            == ConnectionState::Online)
+        .await
+    );
 
     engine.set_manual_recording(cam.id, true).await.unwrap();
-    assert!(wait_for(5, || engine.status(cam.id).recording).await, "manual recording did not start");
+    assert!(
+        wait_for(5, || engine.status(cam.id).recording).await,
+        "manual recording did not start"
+    );
 
     // Settings change while recording: the manual request must still be honoured.
     engine.reload_camera(cam.id).await.unwrap();
@@ -375,22 +566,45 @@ async fn manual_recording_survives_reload() {
 async fn stop_camera_stops_worker_and_clears_snapshot() {
     let dir = tempfile::tempdir().unwrap();
     let store = new_store();
-    let motion = MotionConfig { enabled: false, ..MotionConfig::default() };
+    let motion = MotionConfig {
+        enabled: false,
+        ..MotionConfig::default()
+    };
     let cam = store
-        .create_camera(&synthetic("stopping", Schedule::uniform(ScheduleMode::Continuous), true, motion))
+        .create_camera(&synthetic(
+            "stopping",
+            Schedule::uniform(ScheduleMode::Continuous),
+            true,
+            motion,
+        ))
         .unwrap();
     let engine = engine_in(&store, dir.path());
     engine.start().await.unwrap();
-    assert!(wait_for(10, || engine.frames().latest(cam.id).is_some()).await, "no frame published");
-    assert!(wait_for(5, || !recordings_of(&store, cam.id).is_empty()).await, "no recording row");
+    assert!(
+        wait_for(10, || engine.frames().latest(cam.id).is_some()).await,
+        "no frame published"
+    );
+    assert!(
+        wait_for(5, || !recordings_of(&store, cam.id).is_empty()).await,
+        "no recording row"
+    );
 
     engine.stop_camera(cam.id).await;
 
-    assert!(!engine.has_worker(cam.id), "worker still registered after stop_camera");
+    assert!(
+        !engine.has_worker(cam.id),
+        "worker still registered after stop_camera"
+    );
     assert_eq!(engine.status(cam.id).state, ConnectionState::Disabled);
-    assert!(engine.frames().latest(cam.id).is_none(), "stale snapshot served after stop");
+    assert!(
+        engine.frames().latest(cam.id).is_none(),
+        "stale snapshot served after stop"
+    );
     let recs = recordings_of(&store, cam.id);
-    assert!(!recs.is_empty() && recs.iter().all(|r| r.end.is_some()), "open segment not finished: {recs:?}");
+    assert!(
+        !recs.is_empty() && recs.iter().all(|r| r.end.is_some()),
+        "open segment not finished: {recs:?}"
+    );
     // Stopping a camera without a worker is a no-op.
     engine.stop_camera(cam.id).await;
     engine.shutdown().await;
@@ -401,7 +615,12 @@ async fn unreadable_dangling_segment_is_closed_with_zero_totals() {
     let dir = tempfile::tempdir().unwrap();
     let store = new_store();
     let cam = store
-        .create_camera(&synthetic("unreadable", Schedule::default(), false, MotionConfig::default()))
+        .create_camera(&synthetic(
+            "unreadable",
+            Schedule::default(),
+            false,
+            MotionConfig::default(),
+        ))
         .unwrap();
     let start = Utc.with_ymd_and_hms(2026, 5, 2, 9, 0, 0).unwrap();
     let rel = segment_rel_path(cam.id, start);
@@ -411,7 +630,12 @@ async fn unreadable_dangling_segment_is_closed_with_zero_totals() {
     // A directory where the index file should be: reading it fails with a non-NotFound error.
     std::fs::create_dir(ss_recorder::segment::index_path_for(&data_path)).unwrap();
     let rec = store
-        .create_recording(&NewRecording { camera_id: cam.id, path: rel.clone(), start, trigger: RecordingTrigger::Continuous })
+        .create_recording(&NewRecording {
+            camera_id: cam.id,
+            path: rel.clone(),
+            start,
+            trigger: RecordingTrigger::Continuous,
+        })
         .unwrap();
 
     let engine = engine_in(&store, dir.path());

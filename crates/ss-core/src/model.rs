@@ -15,11 +15,30 @@ pub type UserId = i64;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CameraSource {
     /// RTSP stream, decoded to MJPEG through an `ffmpeg` child process.
-    Rtsp { url: String, #[serde(default)] username: Option<String>, #[serde(default)] password: Option<String> },
+    Rtsp {
+        url: String,
+        #[serde(default)]
+        username: Option<String>,
+        #[serde(default)]
+        password: Option<String>,
+    },
     /// HTTP `multipart/x-mixed-replace` MJPEG stream.
-    Mjpeg { url: String, #[serde(default)] username: Option<String>, #[serde(default)] password: Option<String> },
+    Mjpeg {
+        url: String,
+        #[serde(default)]
+        username: Option<String>,
+        #[serde(default)]
+        password: Option<String>,
+    },
     /// HTTP endpoint returning one JPEG per request, polled every `interval_ms`.
-    Snapshot { url: String, #[serde(default)] username: Option<String>, #[serde(default)] password: Option<String>, interval_ms: u64 },
+    Snapshot {
+        url: String,
+        #[serde(default)]
+        username: Option<String>,
+        #[serde(default)]
+        password: Option<String>,
+        interval_ms: u64,
+    },
     /// Generated test pattern (moving box + timestamp-ish noise). No network.
     Synthetic { width: u32, height: u32, fps: u32 },
 }
@@ -53,7 +72,10 @@ pub struct RetentionPolicy {
 
 impl Default for RetentionPolicy {
     fn default() -> Self {
-        Self { max_days: Some(30), max_bytes: None }
+        Self {
+            max_days: Some(30),
+            max_bytes: None,
+        }
     }
 }
 
@@ -109,7 +131,13 @@ pub struct MotionConfig {
 
 impl Default for MotionConfig {
     fn default() -> Self {
-        Self { enabled: true, sensitivity: 50, threshold: 2, regions: Vec::new(), cooldown_seconds: 10 }
+        Self {
+            enabled: true,
+            sensitivity: 50,
+            threshold: 2,
+            regions: Vec::new(),
+            cooldown_seconds: 10,
+        }
     }
 }
 
@@ -149,8 +177,12 @@ impl CameraInput {
             return Err(Invalid("name must be 1..=64 characters".into()));
         }
         match &self.source {
-            CameraSource::Rtsp { url, .. } if !url.starts_with("rtsp://") && !url.starts_with("rtsps://") => {
-                return Err(Invalid("rtsp url must start with rtsp:// or rtsps://".into()))
+            CameraSource::Rtsp { url, .. }
+                if !url.starts_with("rtsp://") && !url.starts_with("rtsps://") =>
+            {
+                return Err(Invalid(
+                    "rtsp url must start with rtsp:// or rtsps://".into(),
+                ))
             }
             CameraSource::Mjpeg { url, .. } | CameraSource::Snapshot { url, .. }
                 if !url.starts_with("http://") && !url.starts_with("https://") =>
@@ -161,9 +193,16 @@ impl CameraInput {
                 return Err(Invalid("interval_ms must be >= 50".into()))
             }
             CameraSource::Synthetic { width, height, fps }
-                if *width == 0 || *height == 0 || *width > 4096 || *height > 4096 || *fps == 0 || *fps > 60 =>
+                if *width == 0
+                    || *height == 0
+                    || *width > 4096
+                    || *height > 4096
+                    || *fps == 0
+                    || *fps > 60 =>
             {
-                return Err(Invalid("synthetic size must be 1..=4096 and fps 1..=60".into()))
+                return Err(Invalid(
+                    "synthetic size must be 1..=4096 and fps 1..=60".into(),
+                ))
             }
             _ => {}
         }
@@ -172,7 +211,9 @@ impl CameraInput {
             return Err(Invalid("segment_seconds must be 10..=3600".into()));
         }
         if r.pre_record_seconds > 30 || r.post_record_seconds > 600 {
-            return Err(Invalid("pre_record_seconds <= 30 and post_record_seconds <= 600".into()));
+            return Err(Invalid(
+                "pre_record_seconds <= 30 and post_record_seconds <= 600".into(),
+            ));
         }
         if !(1..=60).contains(&r.max_fps) {
             return Err(Invalid("max_fps must be 1..=60".into()));
@@ -419,7 +460,11 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { min_free_bytes: 1 << 30, session_ttl_hours: 24, retention_interval_seconds: 300 }
+        Self {
+            min_free_bytes: 1 << 30,
+            session_ttl_hours: 24,
+            retention_interval_seconds: 300,
+        }
     }
 }
 
@@ -431,7 +476,11 @@ mod tests {
         CameraInput {
             name: "Front door".into(),
             enabled: true,
-            source: CameraSource::Synthetic { width: 640, height: 480, fps: 5 },
+            source: CameraSource::Synthetic {
+                width: 640,
+                height: 480,
+                fps: 5,
+            },
             recording: RecordingConfig::default(),
             motion: MotionConfig::default(),
         }
@@ -444,26 +493,52 @@ mod tests {
         i.name = " ".into();
         assert!(i.validate().is_err());
         let mut i = input();
-        i.source = CameraSource::Rtsp { url: "http://x".into(), username: None, password: None };
+        i.source = CameraSource::Rtsp {
+            url: "http://x".into(),
+            username: None,
+            password: None,
+        };
         assert!(i.validate().is_err());
         let mut i = input();
-        i.motion.regions.push(Region { x: 0.5, y: 0.5, w: 0.6, h: 0.1 });
+        i.motion.regions.push(Region {
+            x: 0.5,
+            y: 0.5,
+            w: 0.6,
+            h: 0.1,
+        });
         assert!(i.validate().is_err());
     }
 
     #[test]
     fn source_serde_is_tagged_and_redacts() {
-        let s = CameraSource::Mjpeg { url: "http://cam".into(), username: Some("u".into()), password: Some("p".into()) };
+        let s = CameraSource::Mjpeg {
+            url: "http://cam".into(),
+            username: Some("u".into()),
+            password: Some("p".into()),
+        };
         let v = serde_json::to_value(s.redacted()).unwrap();
         assert_eq!(v["type"], "mjpeg");
         assert_eq!(v["password"], "********");
-        let s = CameraSource::Rtsp { url: "rtsp://a:b@cam/x".into(), username: None, password: None };
-        assert_eq!(serde_json::to_value(s.redacted()).unwrap()["url"], "rtsp://cam/x");
+        let s = CameraSource::Rtsp {
+            url: "rtsp://a:b@cam/x".into(),
+            username: None,
+            password: None,
+        };
+        assert_eq!(
+            serde_json::to_value(s.redacted()).unwrap()["url"],
+            "rtsp://cam/x"
+        );
     }
 
     #[test]
     fn user_hash_not_serialised() {
-        let u = User { id: 1, username: "a".into(), role: Role::Admin, password_hash: "secret".into(), created_at: Utc::now() };
+        let u = User {
+            id: 1,
+            username: "a".into(),
+            role: Role::Admin,
+            password_hash: "secret".into(),
+            created_at: Utc::now(),
+        };
         assert!(!serde_json::to_string(&u).unwrap().contains("secret"));
     }
 }

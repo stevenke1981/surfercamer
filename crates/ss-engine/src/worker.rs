@@ -13,8 +13,8 @@ use chrono::{DateTime, Utc};
 use ss_camera::FrameSource;
 use ss_core::redact::scrub_credentials;
 use ss_core::{
-    Camera, CameraId, CameraStatus, ConnectionState, Error, Event, EventId, EventKind, Frame, NewEvent,
-    NewRecording, RecordingId, RecordingTrigger, Result, Schedule, Settings, Store,
+    Camera, CameraId, CameraStatus, ConnectionState, Error, Event, EventId, EventKind, Frame,
+    NewEvent, NewRecording, RecordingId, RecordingTrigger, Result, Schedule, Settings, Store,
 };
 use ss_motion::MotionDetector;
 use ss_recorder::disk::disk_space;
@@ -120,9 +120,20 @@ pub(crate) fn spawn(engine: Engine, camera: Camera, manual: bool) -> Worker {
         frames,
         stop_rx.clone(),
     )));
-    handles.push(tokio::spawn(supervise(engine, camera, shared.clone(), stop_rx)));
+    handles.push(tokio::spawn(supervise(
+        engine,
+        camera,
+        shared.clone(),
+        stop_rx,
+    )));
 
-    Worker { shared, task: Task { stop: stop_tx, handles } }
+    Worker {
+        shared,
+        task: Task {
+            stop: stop_tx,
+            handles,
+        },
+    }
 }
 
 /// Publish an event through the engine, logging (not propagating) failures.
@@ -134,7 +145,14 @@ pub(crate) fn emit(
     score: f32,
     recording_id: Option<RecordingId>,
 ) -> Option<Event> {
-    let ev = NewEvent { camera_id: Some(camera_id), kind, at: Utc::now(), score, message, recording_id };
+    let ev = NewEvent {
+        camera_id: Some(camera_id),
+        kind,
+        at: Utc::now(),
+        score,
+        message,
+        recording_id,
+    };
     match engine.emit_event(ev) {
         Ok(event) => Some(event),
         Err(e) => {
@@ -152,7 +170,12 @@ enum ReadOutcome {
 }
 
 /// Connect, read frames, publish them, and reconnect with backoff until stopped.
-async fn supervise(engine: Engine, camera: Camera, shared: Arc<Shared>, mut stop: watch::Receiver<bool>) {
+async fn supervise(
+    engine: Engine,
+    camera: Camera,
+    shared: Arc<Shared>,
+    mut stop: watch::Receiver<bool>,
+) {
     let id = camera.id;
     let mut backoff = MIN_BACKOFF;
     // True between a connection loss being announced and the next first frame.
@@ -165,7 +188,17 @@ async fn supervise(engine: Engine, camera: Camera, shared: Arc<Shared>, mut stop
         };
         let failure = match connected {
             Ok(mut source) => {
-                match read_frames(&engine, id, &shared, source.as_mut(), &mut stop, &mut lost, &mut backoff).await {
+                match read_frames(
+                    &engine,
+                    id,
+                    &shared,
+                    source.as_mut(),
+                    &mut stop,
+                    &mut lost,
+                    &mut backoff,
+                )
+                .await
+                {
                     ReadOutcome::Stopped => break,
                     ReadOutcome::Failed(msg) => msg,
                 }
@@ -212,7 +245,14 @@ async fn read_frames(
                     if std::mem::replace(lost, false) {
                         // The frames before the outage say nothing about the scene now.
                         shared.motion_reset.notify_one();
-                        emit(engine, id, EventKind::ConnectionRestored, "Connection restored".into(), 0.0, None);
+                        emit(
+                            engine,
+                            id,
+                            EventKind::ConnectionRestored,
+                            "Connection restored".into(),
+                            0.0,
+                            None,
+                        );
                         info!(camera = id, "camera back online");
                     }
                 }
@@ -241,7 +281,14 @@ fn announce_failure(engine: &Engine, id: CameraId, shared: &Shared, lost: &mut b
     engine.frames().clear_latest(id);
     if !*lost {
         *lost = true;
-        emit(engine, id, EventKind::ConnectionLost, format!("Connection lost: {msg}"), 0.0, None);
+        emit(
+            engine,
+            id,
+            EventKind::ConnectionLost,
+            format!("Connection lost: {msg}"),
+            0.0,
+            None,
+        );
     }
     warn!(camera = id, error = %msg, "camera unavailable, will retry");
 }
@@ -264,7 +311,11 @@ impl FpsMeter {
             let dt = now.duration_since(last).as_secs_f32();
             if dt > 0.0 {
                 let inst = 1.0 / dt;
-                self.fps = if self.fps > 0.0 { self.fps * 0.8 + inst * 0.2 } else { inst };
+                self.fps = if self.fps > 0.0 {
+                    self.fps * 0.8 + inst * 0.2
+                } else {
+                    inst
+                };
             }
         }
         self.last = Some(now);
@@ -422,7 +473,8 @@ impl Recorder {
     fn new(engine: Engine, camera: &Camera, shared: Arc<Shared>, root: PathBuf) -> Self {
         let rc = &camera.recording;
         let max_fps = i64::from(rc.max_fps.clamp(1, 60));
-        let link_secs = i64::from(rc.pre_record_seconds) + i64::from(camera.motion.cooldown_seconds);
+        let link_secs =
+            i64::from(rc.pre_record_seconds) + i64::from(camera.motion.cooldown_seconds);
         Self {
             engine,
             shared,
@@ -449,7 +501,10 @@ impl Recorder {
         let ts = frame.ts;
         if let Some(newest) = self.last_accepted {
             if clock_jumped_back(newest, ts) {
-                warn!(camera = self.camera_id, "wall clock moved backwards; starting a new segment");
+                warn!(
+                    camera = self.camera_id,
+                    "wall clock moved backwards; starting a new segment"
+                );
                 self.close(false).await;
                 // Buffered frames carry the old clock; the new segment starts fresh.
                 self.pre.drain();
@@ -457,12 +512,16 @@ impl Recorder {
                 self.last_accepted = None;
             }
         }
-        if self.last_accepted.is_some_and(|prev| ts - prev < self.min_gap) {
+        if self
+            .last_accepted
+            .is_some_and(|prev| ts - prev < self.min_gap)
+        {
             return;
         }
         self.last_accepted = Some(ts);
         self.pre.push(ts, frame.jpeg.clone());
-        self.evaluate(Utc::now(), Some((ts, frame.jpeg.clone()))).await;
+        self.evaluate(Utc::now(), Some((ts, frame.jpeg.clone())))
+            .await;
     }
 
     /// Apply the record policy at `now`, opening, rotating or closing segments.
@@ -471,7 +530,10 @@ impl Recorder {
         let mode = self.schedule.mode_at(&now);
         let (trigger, motion_active) = {
             let policy = lock(&self.shared.policy);
-            (policy.decide(now, mode, self.post_secs), policy.motion_active(now, self.post_secs))
+            (
+                policy.decide(now, mode, self.post_secs),
+                policy.motion_active(now, self.post_secs),
+            )
         };
         lock(&self.shared.status).motion_active = motion_active;
 
@@ -485,7 +547,9 @@ impl Recorder {
         let frame_ts = frame.as_ref().map_or(now, |(ts, _)| *ts);
         let rotate = match &self.open {
             None => true,
-            Some(open) => open.trigger != trigger || frame_ts - open.writer.start() >= self.segment_len,
+            Some(open) => {
+                open.trigger != trigger || frame_ts - open.writer.start() >= self.segment_len
+            }
         };
         if rotate {
             let from_idle = self.open.is_none();
@@ -510,7 +574,12 @@ impl Recorder {
     }
 
     /// Open a segment; drains the pre-buffer so buffered frames are not lost.
-    async fn open_segment(&mut self, trigger: RecordingTrigger, frame_ts: DateTime<Utc>, announce: bool) -> bool {
+    async fn open_segment(
+        &mut self,
+        trigger: RecordingTrigger,
+        frame_ts: DateTime<Utc>,
+        announce: bool,
+    ) -> bool {
         let newest_written = self.last_written;
         let pending: Vec<(DateTime<Utc>, Bytes)> = self
             .pre
@@ -528,7 +597,11 @@ impl Recorder {
                 return false;
             }
         };
-        self.open = Some(OpenSegment { id, writer, trigger });
+        self.open = Some(OpenSegment {
+            id,
+            writer,
+            trigger,
+        });
         *lock(&self.shared.open_recording) = Some(id);
         self.shared.open_bytes.store(0, Ordering::Relaxed);
         {
@@ -549,7 +622,12 @@ impl Recorder {
                 Some(id),
             );
         }
-        info!(camera = self.camera_id, recording = id, trigger = trigger.as_str(), "segment opened");
+        info!(
+            camera = self.camera_id,
+            recording = id,
+            trigger = trigger.as_str(),
+            "segment opened"
+        );
         for (ts, jpeg) in pending {
             self.write(ts, &jpeg).await;
         }
@@ -567,15 +645,24 @@ impl Recorder {
         if mark.recording_id.is_some() || (start - mark.at).abs() > self.motion_link_window {
             return;
         }
-        match self.store().set_event_recording(mark.event_id, recording_id) {
+        match self
+            .store()
+            .set_event_recording(mark.event_id, recording_id)
+        {
             Ok(()) => mark.recording_id = Some(recording_id),
-            Err(e) => warn!(camera = self.camera_id, error = %e, "could not link motion event to recording"),
+            Err(e) => {
+                warn!(camera = self.camera_id, error = %e, "could not link motion event to recording")
+            }
         }
     }
 
     /// Create the segment file and its row. A file name clash (two segments
     /// starting in the same millisecond) is resolved by moving the start forward.
-    fn create_segment(&self, start: DateTime<Utc>, trigger: RecordingTrigger) -> Result<(SegmentWriter, RecordingId)> {
+    fn create_segment(
+        &self,
+        start: DateTime<Utc>,
+        trigger: RecordingTrigger,
+    ) -> Result<(SegmentWriter, RecordingId)> {
         let mut t = start;
         for _ in 0..MAX_SEGMENT_ATTEMPTS {
             let rel = segment_rel_path(self.camera_id, t);
@@ -587,7 +674,12 @@ impl Recorder {
                 }
                 Err(e) => return Err(e),
             };
-            let new = NewRecording { camera_id: self.camera_id, path: rel.clone(), start: t, trigger };
+            let new = NewRecording {
+                camera_id: self.camera_id,
+                path: rel.clone(),
+                start: t,
+                trigger,
+            };
             return match self.store().create_recording(&new) {
                 Ok(rec) => Ok((writer, rec.id)),
                 Err(e) => {
@@ -599,7 +691,9 @@ impl Recorder {
                 }
             };
         }
-        Err(Error::Storage("could not allocate a unique segment file name".into()))
+        Err(Error::Storage(
+            "could not allocate a unique segment file name".into(),
+        ))
     }
 
     /// Append a frame to the open segment, skipping frames already written.
@@ -627,7 +721,12 @@ impl Recorder {
     /// Finish the open segment and record its final size in the store. The
     /// fsync happens on a blocking thread.
     async fn close(&mut self, announce: bool) {
-        let Some(OpenSegment { id, writer, trigger }) = self.open.take() else {
+        let Some(OpenSegment {
+            id,
+            writer,
+            trigger,
+        }) = self.open.take()
+        else {
             return;
         };
         let frames = writer.frames();
@@ -635,8 +734,12 @@ impl Recorder {
         let end = writer.last_ts();
         match tokio::task::spawn_blocking(move || writer.finish()).await {
             Ok(Ok(_)) => {}
-            Ok(Err(e)) => warn!(camera = self.camera_id, recording = id, error = %e, "segment close reported an error"),
-            Err(e) => warn!(camera = self.camera_id, recording = id, error = %e, "segment close task failed"),
+            Ok(Err(e)) => {
+                warn!(camera = self.camera_id, recording = id, error = %e, "segment close reported an error")
+            }
+            Err(e) => {
+                warn!(camera = self.camera_id, recording = id, error = %e, "segment close task failed")
+            }
         }
         if let Err(e) = self.store().finish_recording(id, end, frames, size) {
             error!(camera = self.camera_id, recording = id, error = %e, "failed to finish recording row");
@@ -648,7 +751,12 @@ impl Recorder {
             st.recording = false;
             st.recording_trigger = None;
         }
-        info!(camera = self.camera_id, recording = id, frames, "segment closed");
+        info!(
+            camera = self.camera_id,
+            recording = id,
+            frames,
+            "segment closed"
+        );
         if announce {
             emit(
                 &self.engine,
@@ -680,13 +788,19 @@ impl Recorder {
         if free >= settings.min_free_bytes {
             return true;
         }
-        if self.last_storage_full.is_none_or(|prev| now - prev >= STORAGE_FULL_REPEAT) {
+        if self
+            .last_storage_full
+            .is_none_or(|prev| now - prev >= STORAGE_FULL_REPEAT)
+        {
             self.last_storage_full = Some(now);
             emit(
                 &self.engine,
                 self.camera_id,
                 EventKind::StorageFull,
-                format!("Storage full: {free} bytes free, {} required", settings.min_free_bytes),
+                format!(
+                    "Storage full: {free} bytes free, {} required",
+                    settings.min_free_bytes
+                ),
                 0.0,
                 None,
             );
@@ -704,10 +818,22 @@ mod tests {
     fn clock_jump_detection_tolerates_small_steps_only() {
         let t = Utc.with_ymd_and_hms(2026, 5, 1, 10, 0, 0).unwrap();
         assert!(!clock_jumped_back(t, t));
-        assert!(!clock_jumped_back(t, t + chrono::Duration::seconds(5)), "forward is never a jump");
-        assert!(!clock_jumped_back(t, t - chrono::Duration::milliseconds(1500)), "within tolerance");
-        assert!(!clock_jumped_back(t, t - chrono::Duration::seconds(2)), "boundary is tolerated");
-        assert!(clock_jumped_back(t, t - chrono::Duration::milliseconds(2001)));
+        assert!(
+            !clock_jumped_back(t, t + chrono::Duration::seconds(5)),
+            "forward is never a jump"
+        );
+        assert!(
+            !clock_jumped_back(t, t - chrono::Duration::milliseconds(1500)),
+            "within tolerance"
+        );
+        assert!(
+            !clock_jumped_back(t, t - chrono::Duration::seconds(2)),
+            "boundary is tolerated"
+        );
+        assert!(clock_jumped_back(
+            t,
+            t - chrono::Duration::milliseconds(2001)
+        ));
         assert!(clock_jumped_back(t, t - chrono::Duration::hours(1)));
     }
 

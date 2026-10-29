@@ -15,7 +15,10 @@ pub struct MotionResult {
     pub triggered: bool,
 }
 
-const NO_MOTION: MotionResult = MotionResult { score: 0.0, triggered: false };
+const NO_MOTION: MotionResult = MotionResult {
+    score: 0.0,
+    triggered: false,
+};
 
 /// Map sensitivity 1..=99 to a per-pixel luma delta: 99 → 5, 1 → 100 (linear).
 pub fn sensitivity_to_delta(sensitivity: u8) -> u8 {
@@ -36,7 +39,13 @@ pub struct MotionDetector {
 
 impl MotionDetector {
     pub fn new(config: MotionConfig) -> Self {
-        Self { config, bg: Vec::new(), width: 0, height: 0, mask: Vec::new() }
+        Self {
+            config,
+            bg: Vec::new(),
+            width: 0,
+            height: 0,
+            mask: Vec::new(),
+        }
     }
 
     pub fn config(&self) -> &MotionConfig {
@@ -120,7 +129,10 @@ impl MotionDetector {
         }
         let score = changed as f32 / analysed as f32;
         let over = changed * 100 >= u64::from(self.config.threshold) * analysed;
-        MotionResult { score, triggered: self.config.enabled && over }
+        MotionResult {
+            score,
+            triggered: self.config.enabled && over,
+        }
     }
 }
 
@@ -226,7 +238,10 @@ mod tests {
     #[test]
     fn threshold_boundary_is_inclusive() {
         // 25% change against threshold 25 must trigger (score*100 >= threshold).
-        let config = MotionConfig { threshold: 25, ..MotionConfig::default() };
+        let config = MotionConfig {
+            threshold: 25,
+            ..MotionConfig::default()
+        };
         let mut d = det_with(config);
         d.process_luma(W, H, &frame(W, H, 20, None, 0));
         let r = d.process_luma(W, H, &frame(W, H, 20, Some((40, 30, 80, 60)), 220));
@@ -235,7 +250,10 @@ mod tests {
 
     #[test]
     fn region_excluding_change_not_triggered() {
-        let config = MotionConfig { regions: vec![region(0.5, 0.0, 0.5, 1.0)], ..MotionConfig::default() };
+        let config = MotionConfig {
+            regions: vec![region(0.5, 0.0, 0.5, 1.0)],
+            ..MotionConfig::default()
+        };
         let mut d = det_with(config);
         let change = frame(W, H, 20, Some((0, 0, 80, 60)), 220);
         d.process_luma(W, H, &frame(W, H, 20, None, 0));
@@ -246,7 +264,10 @@ mod tests {
 
     #[test]
     fn region_including_change_triggered() {
-        let config = MotionConfig { regions: vec![region(0.0, 0.0, 0.5, 0.5)], ..MotionConfig::default() };
+        let config = MotionConfig {
+            regions: vec![region(0.0, 0.0, 0.5, 0.5)],
+            ..MotionConfig::default()
+        };
         let mut d = det_with(config);
         d.process_luma(W, H, &frame(W, H, 20, None, 0));
         let r = d.process_luma(W, H, &frame(W, H, 20, Some((0, 0, 80, 60)), 220));
@@ -256,7 +277,10 @@ mod tests {
 
     #[test]
     fn overlapping_regions_counted_once() {
-        let single = MotionConfig { regions: vec![region(0.0, 0.0, 0.5, 1.0)], ..MotionConfig::default() };
+        let single = MotionConfig {
+            regions: vec![region(0.0, 0.0, 0.5, 1.0)],
+            ..MotionConfig::default()
+        };
         let dup = MotionConfig {
             regions: vec![region(0.0, 0.0, 0.5, 1.0), region(0.0, 0.0, 0.5, 1.0)],
             ..MotionConfig::default()
@@ -288,7 +312,10 @@ mod tests {
 
     #[test]
     fn disabled_never_triggers() {
-        let config = MotionConfig { enabled: false, ..MotionConfig::default() };
+        let config = MotionConfig {
+            enabled: false,
+            ..MotionConfig::default()
+        };
         let mut d = det_with(config);
         d.process_luma(W, H, &frame(W, H, 20, None, 0));
         let r = d.process_luma(W, H, &frame(W, H, 20, Some((40, 30, 80, 60)), 220));
@@ -336,7 +363,9 @@ mod tests {
     fn encode_jpeg(w: u32, h: u32, pixels: Vec<u8>) -> Vec<u8> {
         let img = GrayImage::from_raw(w, h, pixels).expect("buffer size");
         let mut out = Vec::new();
-        JpegEncoder::new_with_quality(&mut out, 95).encode_image(&img).expect("encode");
+        JpegEncoder::new_with_quality(&mut out, 95)
+            .encode_image(&img)
+            .expect("encode");
         out
     }
 
@@ -354,7 +383,13 @@ mod tests {
     #[test]
     fn process_jpeg_rejects_invalid_bytes() {
         let mut d = det();
-        assert!(matches!(d.process_jpeg(b"definitely not a jpeg"), Err(ss_core::Error::Invalid(_))));
-        assert!(matches!(d.process_jpeg(&[]), Err(ss_core::Error::Invalid(_))));
+        assert!(matches!(
+            d.process_jpeg(b"definitely not a jpeg"),
+            Err(ss_core::Error::Invalid(_))
+        ));
+        assert!(matches!(
+            d.process_jpeg(&[]),
+            Err(ss_core::Error::Invalid(_))
+        ));
     }
 }

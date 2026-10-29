@@ -43,7 +43,9 @@ impl Default for Schedule {
 
 impl Schedule {
     pub fn uniform(mode: ScheduleMode) -> Self {
-        Self { slots: vec![mode; SLOTS_PER_WEEK] }
+        Self {
+            slots: vec![mode; SLOTS_PER_WEEK],
+        }
     }
 
     /// `weekday`: 0 = Monday … 6 = Sunday; `slot`: 0..48 (slot 0 = 00:00–00:30).
@@ -58,7 +60,11 @@ impl Schedule {
     /// Mode in effect at `t` (converted to the local time zone).
     pub fn mode_at<Tz: TimeZone>(&self, t: &DateTime<Tz>) -> ScheduleMode {
         let local = t.with_timezone(&Local);
-        self.mode_at_naive(local.weekday().num_days_from_monday() as usize, local.hour(), local.minute())
+        self.mode_at_naive(
+            local.weekday().num_days_from_monday() as usize,
+            local.hour(),
+            local.minute(),
+        )
     }
 
     pub fn mode_at_naive(&self, weekday: usize, hour: u32, minute: u32) -> ScheduleMode {
@@ -74,7 +80,10 @@ impl TryFrom<Vec<ScheduleMode>> for Schedule {
     type Error = String;
     fn try_from(slots: Vec<ScheduleMode>) -> Result<Self, Self::Error> {
         if slots.len() != SLOTS_PER_WEEK {
-            return Err(format!("schedule must have {SLOTS_PER_WEEK} slots, got {}", slots.len()));
+            return Err(format!(
+                "schedule must have {SLOTS_PER_WEEK} slots, got {}",
+                slots.len()
+            ));
         }
         Ok(Self { slots })
     }
@@ -102,6 +111,9 @@ mod tests {
     fn serde_rejects_wrong_length() {
         assert!(serde_json::from_str::<Schedule>("[\"none\"]").is_err());
         let json = serde_json::to_string(&Schedule::default()).unwrap();
-        assert_eq!(serde_json::from_str::<Schedule>(&json).unwrap(), Schedule::default());
+        assert_eq!(
+            serde_json::from_str::<Schedule>(&json).unwrap(),
+            Schedule::default()
+        );
     }
 }

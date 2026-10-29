@@ -94,8 +94,14 @@ impl SegmentWriter {
         if let Some(parent) = data_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let data_file = File::options().write(true).create_new(true).open(&data_path)?;
-        let index_file = File::options().write(true).create_new(true).open(index_path_for(&data_path))?;
+        let data_file = File::options()
+            .write(true)
+            .create_new(true)
+            .open(&data_path)?;
+        let index_file = File::options()
+            .write(true)
+            .create_new(true)
+            .open(index_path_for(&data_path))?;
         Ok(Self {
             data: BufWriter::new(data_file),
             index: BufWriter::new(index_file),
@@ -113,8 +119,12 @@ impl SegmentWriter {
     pub fn write_frame(&mut self, ts: DateTime<Utc>, jpeg: &[u8]) -> Result<()> {
         let len = u32::try_from(jpeg.len())
             .map_err(|_| Error::Invalid("frame larger than 4 GiB".into()))?;
-        let offset_ms = u32::try_from((ts - self.start).num_milliseconds().clamp(0, i64::from(u32::MAX)))
-            .unwrap_or(u32::MAX);
+        let offset_ms = u32::try_from(
+            (ts - self.start)
+                .num_milliseconds()
+                .clamp(0, i64::from(u32::MAX)),
+        )
+        .unwrap_or(u32::MAX);
         let byte_offset = self.data_bytes;
 
         self.data.write_all(jpeg)?;
@@ -165,8 +175,14 @@ impl SegmentWriter {
     /// Flush, fsync and close. `end` = timestamp of the last frame.
     pub fn finish(self) -> Result<SegmentSummary> {
         let size_bytes = self.size_bytes();
-        let data = self.data.into_inner().map_err(|e| Error::Io(e.into_error()))?;
-        let index = self.index.into_inner().map_err(|e| Error::Io(e.into_error()))?;
+        let data = self
+            .data
+            .into_inner()
+            .map_err(|e| Error::Io(e.into_error()))?;
+        let index = self
+            .index
+            .into_inner()
+            .map_err(|e| Error::Io(e.into_error()))?;
         data.sync_all()?;
         index.sync_all()?;
         Ok(SegmentSummary {
@@ -199,11 +215,18 @@ impl SegmentReader {
             let entry = IndexEntry {
                 offset_ms: u32::from_le_bytes([rec[0], rec[1], rec[2], rec[3]]),
                 len: u32::from_le_bytes([rec[4], rec[5], rec[6], rec[7]]),
-                byte_offset: u64::from_le_bytes([rec[8], rec[9], rec[10], rec[11], rec[12], rec[13], rec[14], rec[15]]),
+                byte_offset: u64::from_le_bytes([
+                    rec[8], rec[9], rec[10], rec[11], rec[12], rec[13], rec[14], rec[15],
+                ]),
             };
-            let in_range = entry.byte_offset.checked_add(u64::from(entry.len)).is_some_and(|end| end <= data_len);
+            let in_range = entry
+                .byte_offset
+                .checked_add(u64::from(entry.len))
+                .is_some_and(|end| end <= data_len);
             // Offsets must be non-decreasing for `index_at`; drop from the first bad entry on.
-            let ordered = entries.last().is_none_or(|prev| entry.offset_ms >= prev.offset_ms);
+            let ordered = entries
+                .last()
+                .is_none_or(|prev| entry.offset_ms >= prev.offset_ms);
             if !in_range || !ordered {
                 break;
             }
@@ -253,7 +276,9 @@ mod tests {
 
     fn frame(i: usize) -> Vec<u8> {
         // Varying lengths, distinct content per frame.
-        (0..(100 + i * 7)).map(|b| (b as u8).wrapping_mul(i as u8 + 1).wrapping_add(i as u8)).collect()
+        (0..(100 + i * 7))
+            .map(|b| (b as u8).wrapping_mul(i as u8 + 1).wrapping_add(i as u8))
+            .collect()
     }
 
     fn write_n(root: &Path, rel: &str, n: usize, step_ms: i64) -> (SegmentSummary, Vec<Vec<u8>>) {
@@ -261,7 +286,8 @@ mod tests {
         let mut frames = Vec::new();
         for i in 0..n {
             let f = frame(i);
-            w.write_frame(t0() + Duration::milliseconds(i as i64 * step_ms), &f).unwrap();
+            w.write_frame(t0() + Duration::milliseconds(i as i64 * step_ms), &f)
+                .unwrap();
             frames.push(f);
         }
         (w.finish().unwrap(), frames)
@@ -274,11 +300,15 @@ mod tests {
         let n = 25;
         let (summary, frames) = write_n(dir.path(), rel, n, 100);
 
-        let expected_size: u64 = frames.iter().map(|f| f.len() as u64).sum::<u64>() + (n * INDEX_RECORD_SIZE) as u64;
+        let expected_size: u64 =
+            frames.iter().map(|f| f.len() as u64).sum::<u64>() + (n * INDEX_RECORD_SIZE) as u64;
         assert_eq!(summary.frames, n as u64);
         assert_eq!(summary.size_bytes, expected_size);
         assert_eq!(summary.start, t0());
-        assert_eq!(summary.end, t0() + Duration::milliseconds((n as i64 - 1) * 100));
+        assert_eq!(
+            summary.end,
+            t0() + Duration::milliseconds((n as i64 - 1) * 100)
+        );
 
         let mut r = SegmentReader::open(dir.path(), rel).unwrap();
         assert_eq!(r.entries().len(), n);
@@ -317,8 +347,10 @@ mod tests {
         // Segment whose first frame arrives 500 ms after start.
         let rel = "cam3/2026-03-04/050607-000.mjpg";
         let mut w = SegmentWriter::create(dir.path(), rel, t0()).unwrap();
-        w.write_frame(t0() + Duration::milliseconds(500), &frame(0)).unwrap();
-        w.write_frame(t0() + Duration::milliseconds(600), &frame(1)).unwrap();
+        w.write_frame(t0() + Duration::milliseconds(500), &frame(0))
+            .unwrap();
+        w.write_frame(t0() + Duration::milliseconds(600), &frame(1))
+            .unwrap();
         w.finish().unwrap();
         let r = SegmentReader::open(dir.path(), rel).unwrap();
         assert_eq!(r.index_at(0), Some(0));
@@ -327,7 +359,10 @@ mod tests {
 
         // Empty segment.
         let rel_empty = "cam3/2026-03-04/050608-000.mjpg";
-        let summary = SegmentWriter::create(dir.path(), rel_empty, t0()).unwrap().finish().unwrap();
+        let summary = SegmentWriter::create(dir.path(), rel_empty, t0())
+            .unwrap()
+            .finish()
+            .unwrap();
         assert_eq!(summary.frames, 0);
         assert_eq!(summary.end, t0());
         assert_eq!(summary.size_bytes, 0);
@@ -343,7 +378,8 @@ mod tests {
         let rel = "cam8/2026-03-04/050607-000.mjpg";
         let mut w = SegmentWriter::create(dir.path(), rel, t0()).unwrap();
         for i in 0..FLUSH_EVERY_FRAMES as usize {
-            w.write_frame(t0() + Duration::milliseconds(i as i64), &frame(i)).unwrap();
+            w.write_frame(t0() + Duration::milliseconds(i as i64), &frame(i))
+                .unwrap();
         }
         // Writer still alive (no finish): the checkpoint must have reached disk.
         let r = SegmentReader::open(dir.path(), rel).unwrap();
@@ -357,7 +393,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let rel = "cam4/2026-03-04/050607-000.mjpg";
         let mut w = SegmentWriter::create(dir.path(), rel, t0()).unwrap();
-        w.write_frame(t0() - Duration::seconds(3), &frame(0)).unwrap();
+        w.write_frame(t0() - Duration::seconds(3), &frame(0))
+            .unwrap();
         w.finish().unwrap();
         let r = SegmentReader::open(dir.path(), rel).unwrap();
         assert_eq!(r.entries()[0].offset_ms, 0);
@@ -386,7 +423,12 @@ mod tests {
         let (_, frames) = write_n(dir.path(), rel, 10, 100);
         let data = dir.path().join(rel);
         let keep: u64 = frames[..6].iter().map(|f| f.len() as u64).sum::<u64>() + 3; // cut into frame 6
-        File::options().write(true).open(&data).unwrap().set_len(keep).unwrap();
+        File::options()
+            .write(true)
+            .open(&data)
+            .unwrap()
+            .set_len(keep)
+            .unwrap();
 
         let mut r = SegmentReader::open(dir.path(), rel).unwrap();
         assert_eq!(r.entries().len(), 6);
@@ -410,7 +452,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         for bad in ["../evil.mjpg", "/abs/evil.mjpg", "cam1/../../evil.mjpg", ""] {
             assert!(
-                matches!(SegmentWriter::create(dir.path(), bad, t0()), Err(Error::Invalid(_))),
+                matches!(
+                    SegmentWriter::create(dir.path(), bad, t0()),
+                    Err(Error::Invalid(_))
+                ),
                 "create accepted {bad:?}"
             );
             assert!(
@@ -425,7 +470,10 @@ mod tests {
     fn create_makes_parent_dirs() {
         let dir = tempfile::tempdir().unwrap();
         let rel = "cam7/2026-03-04/050607-123.mjpg";
-        SegmentWriter::create(dir.path(), rel, t0()).unwrap().finish().unwrap();
+        SegmentWriter::create(dir.path(), rel, t0())
+            .unwrap()
+            .finish()
+            .unwrap();
         assert!(dir.path().join("cam7/2026-03-04/050607-123.mjpg").is_file());
         assert!(dir.path().join("cam7/2026-03-04/050607-123.idx").is_file());
     }
@@ -433,8 +481,15 @@ mod tests {
     #[test]
     fn segment_rel_path_format() {
         let start = t0() + Duration::milliseconds(45);
-        assert_eq!(segment_rel_path(7, start), "cam7/2026-03-04/050607-045.mjpg");
-        let late = Utc.with_ymd_and_hms(2027, 12, 31, 23, 59, 59).unwrap() + Duration::milliseconds(999);
-        assert_eq!(segment_rel_path(120, late), "cam120/2027-12-31/235959-999.mjpg");
+        assert_eq!(
+            segment_rel_path(7, start),
+            "cam7/2026-03-04/050607-045.mjpg"
+        );
+        let late =
+            Utc.with_ymd_and_hms(2027, 12, 31, 23, 59, 59).unwrap() + Duration::milliseconds(999);
+        assert_eq!(
+            segment_rel_path(120, late),
+            "cam120/2027-12-31/235959-999.mjpg"
+        );
     }
 }

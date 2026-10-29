@@ -20,12 +20,18 @@ async fn get_settings(State(st): State<AppState>, _a: Admin) -> ApiResult<Json<S
     Ok(Json(st.store.get_settings()?))
 }
 
-async fn put_settings(State(st): State<AppState>, _a: Admin, ApiJson(s): ApiJson<Settings>) -> ApiResult<Json<Settings>> {
+async fn put_settings(
+    State(st): State<AppState>,
+    _a: Admin,
+    ApiJson(s): ApiJson<Settings>,
+) -> ApiResult<Json<Settings>> {
     if !(1..=720).contains(&s.session_ttl_hours) {
         return Err(ApiError::invalid("session_ttl_hours must be 1..=720"));
     }
     if s.retention_interval_seconds < 10 {
-        return Err(ApiError::invalid("retention_interval_seconds must be >= 10"));
+        return Err(ApiError::invalid(
+            "retention_interval_seconds must be >= 10",
+        ));
     }
     st.store.put_settings(&s)?;
     Ok(Json(s))
@@ -34,7 +40,10 @@ async fn put_settings(State(st): State<AppState>, _a: Admin, ApiJson(s): ApiJson
 async fn system_info(State(st): State<AppState>, _v: Viewer) -> ApiResult<Json<Value>> {
     let cameras = st.store.list_cameras()?;
     let statuses = st.engine.statuses();
-    let online = statuses.iter().filter(|s| s.state == ConnectionState::Online).count();
+    let online = statuses
+        .iter()
+        .filter(|s| s.state == ConnectionState::Online)
+        .count();
     let recording = statuses.iter().filter(|s| s.recording).count();
     let used_bytes = st.store.recording_usage(None)?;
     let root = st.engine.storage_root().to_path_buf();

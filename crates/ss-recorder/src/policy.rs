@@ -40,7 +40,12 @@ impl RecordPolicy {
 
     /// Priority: Manual > Motion (mode records on motion and motion active)
     /// > Continuous (mode records continuously) > None.
-    pub fn decide(&self, now: DateTime<Utc>, mode: ScheduleMode, post_record_seconds: u32) -> Option<RecordingTrigger> {
+    pub fn decide(
+        &self,
+        now: DateTime<Utc>,
+        mode: ScheduleMode,
+        post_record_seconds: u32,
+    ) -> Option<RecordingTrigger> {
         if self.manual {
             return Some(RecordingTrigger::Manual);
         }
@@ -73,7 +78,12 @@ mod tests {
     #[test]
     fn priority_table_without_motion_or_manual() {
         let p = RecordPolicy::new();
-        let expected = [None, Some(RecordingTrigger::Continuous), None, Some(RecordingTrigger::Continuous)];
+        let expected = [
+            None,
+            Some(RecordingTrigger::Continuous),
+            None,
+            Some(RecordingTrigger::Continuous),
+        ];
         for (mode, want) in ALL_MODES.into_iter().zip(expected) {
             assert_eq!(p.decide(t(0), mode, 10), want, "mode {mode:?}");
         }
@@ -83,7 +93,12 @@ mod tests {
     fn priority_table_with_active_motion() {
         let mut p = RecordPolicy::new();
         p.on_motion(t(100));
-        let expected = [None, Some(RecordingTrigger::Continuous), Some(RecordingTrigger::Motion), Some(RecordingTrigger::Motion)];
+        let expected = [
+            None,
+            Some(RecordingTrigger::Continuous),
+            Some(RecordingTrigger::Motion),
+            Some(RecordingTrigger::Motion),
+        ];
         for (mode, want) in ALL_MODES.into_iter().zip(expected) {
             assert_eq!(p.decide(t(105), mode, 10), want, "mode {mode:?}");
         }
@@ -96,8 +111,14 @@ mod tests {
         assert!(p.motion_active(t(110), 10)); // exactly at the boundary
         assert!(!p.motion_active(t(111), 10));
         assert_eq!(p.decide(t(111), ScheduleMode::Motion, 10), None);
-        assert_eq!(p.decide(t(111), ScheduleMode::ContinuousAndMotion, 10), Some(RecordingTrigger::Continuous));
-        assert_eq!(p.decide(t(110), ScheduleMode::Motion, 10), Some(RecordingTrigger::Motion));
+        assert_eq!(
+            p.decide(t(111), ScheduleMode::ContinuousAndMotion, 10),
+            Some(RecordingTrigger::Continuous)
+        );
+        assert_eq!(
+            p.decide(t(110), ScheduleMode::Motion, 10),
+            Some(RecordingTrigger::Motion)
+        );
     }
 
     #[test]
@@ -114,7 +135,11 @@ mod tests {
         p.set_manual(true);
         assert!(p.manual());
         for mode in ALL_MODES {
-            assert_eq!(p.decide(t(0), mode, 0), Some(RecordingTrigger::Manual), "mode {mode:?}");
+            assert_eq!(
+                p.decide(t(0), mode, 0),
+                Some(RecordingTrigger::Manual),
+                "mode {mode:?}"
+            );
         }
         p.set_manual(false);
         assert!(!p.manual());

@@ -58,7 +58,8 @@
   }
 
   async function api(method, path, body) {
-    const opts = { method, credentials: 'same-origin', headers: {} };
+    // X-Requested-With is required by the server for cookie-authenticated unsafe requests (CSRF guard).
+    const opts = { method, credentials: 'same-origin', headers: { 'X-Requested-With': 'ss' } };
     if (body !== undefined) {
       opts.headers['Content-Type'] = 'application/json';
       opts.body = JSON.stringify(body);

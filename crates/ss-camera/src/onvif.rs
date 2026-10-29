@@ -205,7 +205,9 @@ pub async fn discover(timeout: Duration) -> Result<Vec<DiscoveredDevice>> {
                 consecutive_errors += 1;
                 tracing::debug!("ONVIF discovery receive error: {e}");
                 if consecutive_errors >= MAX_RECV_ERRORS {
-                    tracing::warn!("ONVIF discovery stopped after {consecutive_errors} receive errors");
+                    tracing::warn!(
+                        "ONVIF discovery stopped after {consecutive_errors} receive errors"
+                    );
                     break;
                 }
                 tokio::time::sleep(RECV_ERROR_BACKOFF).await;

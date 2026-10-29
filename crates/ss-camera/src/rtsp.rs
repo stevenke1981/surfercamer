@@ -143,7 +143,16 @@ impl RtspSource {
         password: Option<&str>,
         fps: u32,
     ) -> Result<Self> {
-        Self::spawn_with(camera_id, &ffmpeg_bin(), url, username, password, fps, NO_FRAME_TIMEOUT).await
+        Self::spawn_with(
+            camera_id,
+            &ffmpeg_bin(),
+            url,
+            username,
+            password,
+            fps,
+            NO_FRAME_TIMEOUT,
+        )
+        .await
     }
 
     /// `spawn` with an explicit ffmpeg program and no-frame timeout (tests use
@@ -232,7 +241,8 @@ impl FrameSource for RtspSource {
                 return Ok(make_frame(self.camera_id, jpeg));
             }
             let deadline = self.last_frame + self.no_frame_timeout;
-            let read = tokio::time::timeout_at(deadline, self.stdout.read(&mut self.read_buf)).await;
+            let read =
+                tokio::time::timeout_at(deadline, self.stdout.read(&mut self.read_buf)).await;
             match read {
                 Err(_) => {
                     return Err(camera_error(format!(
@@ -325,8 +335,14 @@ mod tests {
         )
         .await
         .expect("spawn fake ffmpeg");
-        let err = source.next_frame().await.expect_err("silent stream must fail");
-        assert!(matches!(&err, Error::Camera(m) if m.contains("no frame")), "{err:?}");
+        let err = source
+            .next_frame()
+            .await
+            .expect_err("silent stream must fail");
+        assert!(
+            matches!(&err, Error::Camera(m) if m.contains("no frame")),
+            "{err:?}"
+        );
         assert!(started.elapsed() < Duration::from_secs(2));
     }
 

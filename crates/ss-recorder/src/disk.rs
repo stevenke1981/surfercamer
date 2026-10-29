@@ -39,7 +39,10 @@ pub fn disk_space(path: &Path) -> Result<DiskSpace> {
 #[cfg(not(unix))]
 pub fn disk_space(path: &Path) -> Result<DiskSpace> {
     let _ = path;
-    Ok(DiskSpace { total_bytes: u64::MAX, free_bytes: u64::MAX })
+    Ok(DiskSpace {
+        total_bytes: u64::MAX,
+        free_bytes: u64::MAX,
+    })
 }
 
 #[cfg(test)]

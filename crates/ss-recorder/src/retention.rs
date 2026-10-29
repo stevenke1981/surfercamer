@@ -14,7 +14,12 @@ use crate::segment::{index_path_for, safe_join};
 /// oldest first; `usage` is the camera's total bytes (including locked).
 /// Rules: delete all with `end < now - max_days`; then, while
 /// `usage - deleted_bytes > max_bytes`, delete the oldest remaining.
-pub fn plan(candidates: &[Recording], policy: &RetentionPolicy, usage: u64, now: DateTime<Utc>) -> Vec<RecordingId> {
+pub fn plan(
+    candidates: &[Recording],
+    policy: &RetentionPolicy,
+    usage: u64,
+    now: DateTime<Utc>,
+) -> Vec<RecordingId> {
     // Defensive filtering: no duplicates, never locked or unfinished.
     let mut seen = HashSet::new();
     let eligible: Vec<&Recording> = candidates
@@ -96,7 +101,14 @@ fn remove_dir_if_empty(dir: &Path) -> Result<()> {
     match fs::remove_dir(dir) {
         Ok(()) => Ok(()),
         // Raced with another writer: not empty any more, or already gone.
-        Err(e) if matches!(e.kind(), io::ErrorKind::NotFound | io::ErrorKind::DirectoryNotEmpty) => Ok(()),
+        Err(e)
+            if matches!(
+                e.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::DirectoryNotEmpty
+            ) =>
+        {
+            Ok(())
+        }
         Err(e) => Err(Error::Io(e)),
     }
 }
@@ -129,11 +141,19 @@ mod tests {
 
     /// Candidates oldest first (larger days_ago = older).
     fn sample() -> Vec<Recording> {
-        vec![rec(1, 40, 100), rec(2, 20, 100), rec(3, 10, 100), rec(4, 1, 100)]
+        vec![
+            rec(1, 40, 100),
+            rec(2, 20, 100),
+            rec(3, 10, 100),
+            rec(4, 1, 100),
+        ]
     }
 
     fn policy(max_days: Option<u32>, max_bytes: Option<u64>) -> RetentionPolicy {
-        RetentionPolicy { max_days, max_bytes }
+        RetentionPolicy {
+            max_days,
+            max_bytes,
+        }
     }
 
     #[test]
@@ -239,6 +259,9 @@ mod tests {
     #[test]
     fn delete_rejects_traversal() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(matches!(delete_segment_files(dir.path(), "../x.mjpg"), Err(Error::Invalid(_))));
+        assert!(matches!(
+            delete_segment_files(dir.path(), "../x.mjpg"),
+            Err(Error::Invalid(_))
+        ));
     }
 }

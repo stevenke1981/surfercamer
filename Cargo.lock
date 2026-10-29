@@ -1692,6 +1692,7 @@ dependencies = [
  "reqwest",
  "serde",
  "ss-core",
+ "tempfile",
  "tokio",
  "tracing",
 ]

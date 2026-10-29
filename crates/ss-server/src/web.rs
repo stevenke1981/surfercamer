@@ -8,13 +8,28 @@ const APP_JS: &str = include_str!("../web/app.js");
 const STYLE_CSS: &str = include_str!("../web/style.css");
 
 pub async fn index() -> Response {
-    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], INDEX_HTML).into_response()
+    (
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        INDEX_HTML,
+    )
+        .into_response()
 }
 
 pub async fn app_js() -> Response {
-    ([(header::CONTENT_TYPE, "application/javascript; charset=utf-8")], APP_JS).into_response()
+    (
+        [(
+            header::CONTENT_TYPE,
+            "application/javascript; charset=utf-8",
+        )],
+        APP_JS,
+    )
+        .into_response()
 }
 
 pub async fn style_css() -> Response {
-    ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], STYLE_CSS).into_response()
+    (
+        [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
+        STYLE_CSS,
+    )
+        .into_response()
 }

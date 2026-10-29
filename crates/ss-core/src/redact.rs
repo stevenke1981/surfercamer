@@ -5,7 +5,9 @@ pub const MASK: &str = "********";
 
 /// Remove `user:pass@` from a `scheme://user:pass@host/...` URL.
 pub fn strip_userinfo(url: &str) -> String {
-    let Some(scheme_end) = url.find("://") else { return url.to_string() };
+    let Some(scheme_end) = url.find("://") else {
+        return url.to_string();
+    };
     let rest = &url[scheme_end + 3..];
     let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     match rest[..authority_end].rfind('@') {
@@ -26,7 +28,9 @@ pub fn scrub_credentials(text: &str) -> String {
             .map_or(0, |i| i + 1);
         out.push_str(&rest[..scheme_start]);
         let tail = &rest[scheme_start..];
-        let url_end = tail.find(|c: char| c.is_whitespace() || c == '"' || c == '\'').unwrap_or(tail.len());
+        let url_end = tail
+            .find(|c: char| c.is_whitespace() || c == '"' || c == '\'')
+            .unwrap_or(tail.len());
         out.push_str(&strip_userinfo(&tail[..url_end]));
         rest = &tail[url_end..];
     }
@@ -40,14 +44,21 @@ mod tests {
 
     #[test]
     fn strips_userinfo() {
-        assert_eq!(strip_userinfo("rtsp://u:p@host:554/s?x=@"), "rtsp://host:554/s?x=@");
+        assert_eq!(
+            strip_userinfo("rtsp://u:p@host:554/s?x=@"),
+            "rtsp://host:554/s?x=@"
+        );
         assert_eq!(strip_userinfo("http://host/a@b"), "http://host/a@b");
         assert_eq!(strip_userinfo("no url"), "no url");
     }
 
     #[test]
     fn scrubs_text() {
-        let msg = "Error opening input file rtsp://admin:se%40cret@10.0.0.5/live: 401, also http://x:y@h";
-        assert_eq!(scrub_credentials(msg), "Error opening input file rtsp://10.0.0.5/live: 401, also http://h");
+        let msg =
+            "Error opening input file rtsp://admin:se%40cret@10.0.0.5/live: 401, also http://x:y@h";
+        assert_eq!(
+            scrub_credentials(msg),
+            "Error opening input file rtsp://10.0.0.5/live: 401, also http://h"
+        );
     }
 }

@@ -13,7 +13,10 @@ pub struct PreBuffer {
 impl PreBuffer {
     /// Keep frames no older than `seconds` relative to the newest frame.
     pub fn new(seconds: u32) -> Self {
-        Self { seconds, frames: VecDeque::new() }
+        Self {
+            seconds,
+            frames: VecDeque::new(),
+        }
     }
 
     pub fn set_seconds(&mut self, seconds: u32) {
